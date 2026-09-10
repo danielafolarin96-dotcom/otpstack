@@ -1,0 +1,66 @@
+@import "tailwindcss";
+
+/* Color tokens — see DESIGN.md. Light is the default; dark mirrors the same
+   roles (not a naive invert) under prefers-color-scheme. */
+:root {
+  --paper: #fbf6ec;
+  --paper-raised: #ffffff;
+  --ink: #1a1712;
+  --signal: #ff5a1f;
+  --signal-bright: #ff7a45;
+  --amber: #c97b12;
+  --slate: #6b6357;
+  --slate-dim: #948c7c;
+  --line: #eae1d2;
+  --text: #201c16;
+  --text-dim: #6b6357;
+  --danger: #c4432b;
+  --good: #1f9d6b;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: #17130d;
+    --paper-raised: #211c14;
+    --ink: #fbf6ec;
+    --signal: #ff7a45;
+    --signal-bright: #ff9868;
+    --line: #3a3225;
+    --text: #f3ecdd;
+    --text-dim: #b8ac97;
+    --good: #35c98a;
+    --danger: #e9715a;
+  }
+}
+
+@theme inline {
+  --color-paper: var(--paper);
+  --color-paper-raised: var(--paper-raised);
+  --color-ink: var(--ink);
+  --color-signal: var(--signal);
+  --color-signal-bright: var(--signal-bright);
+  --color-amber: var(--amber);
+  --color-slate: var(--slate);
+  --color-slate-dim: var(--slate-dim);
+  --color-line: var(--line);
+  --color-text: var(--text);
+  --color-text-dim: var(--text-dim);
+  --color-danger: var(--danger);
+  --color-good: var(--good);
+
+  --font-display: var(--font-sora);
+  --font-body: var(--font-manrope);
+  --font-technical: var(--font-space-mono);
+}
+
+body {
+  background: var(--paper);
+  color: var(--text);
+  font-family: var(--font-body), ui-sans-serif, system-ui, sans-serif;
+}
+
+h1,
+h2,
+h3 {
+  font-family: var(--font-display), ui-sans-serif, system-ui, sans-serif;
+}
