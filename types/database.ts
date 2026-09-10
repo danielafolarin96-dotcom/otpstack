@@ -69,6 +69,47 @@ export type Database = {
         }
         Relationships: []
       }
+      wallet_transactions: {
+        Row: {
+          amount_kobo: number
+          created_at: string
+          id: string
+          metadata: Json
+          order_id: string | null
+          reference: string
+          type: Database["public"]["Enums"]["wallet_transaction_type"]
+          user_id: string
+        }
+        Insert: {
+          amount_kobo: number
+          created_at?: string
+          id?: string
+          metadata?: Json
+          order_id?: string | null
+          reference: string
+          type: Database["public"]["Enums"]["wallet_transaction_type"]
+          user_id: string
+        }
+        Update: {
+          amount_kobo?: number
+          created_at?: string
+          id?: string
+          metadata?: Json
+          order_id?: string | null
+          reference?: string
+          type?: Database["public"]["Enums"]["wallet_transaction_type"]
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "wallet_transactions_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       wallets: {
         Row: {
           balance_kobo: number
@@ -103,7 +144,11 @@ export type Database = {
       [_ in never]: never
     }
     Enums: {
-      [_ in never]: never
+      wallet_transaction_type:
+        | "topup"
+        | "purchase"
+        | "refund"
+        | "admin_adjustment"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -233,6 +278,13 @@ export const Constants = {
     Enums: {},
   },
   public: {
-    Enums: {},
+    Enums: {
+      wallet_transaction_type: [
+        "topup",
+        "purchase",
+        "refund",
+        "admin_adjustment",
+      ],
+    },
   },
 } as const
