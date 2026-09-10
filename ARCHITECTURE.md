@@ -79,10 +79,45 @@ OtpStack resells temporary phone numbers sourced from 5sim.net, priced in Nigeri
 5. **No code by `expires_at`:** a scheduled job (Vercel Cron -> `/api/cron/expire-orders`) finds expired `pending` orders, cancels them upstream, sets `status=expired_refunded`, and writes a `refund` ledger entry crediting the wallet.
 6. User can also manually cancel a still-`pending` order before expiry for the same refund treatment (`status=cancelled_refunded`).
 
-## 5sim integration (reference only — verify against current 5sim docs before building; provider APIs change)
-- Auth: bearer token (`5SIM_API_KEY`) on every request.
-- Typical endpoints used: list prices for country/product, purchase/activate a number, check SMS status by order id, cancel an order, finish (mark complete) an order, ban a number if invalid.
-- 5sim does not push webhooks for SMS arrival — our own polling job is the source of truth for "did the code arrive yet."
+## 5sim integration (verified against 5sim.net/docs, Sept 2026 — endpoint paths confirmed live)
+- Base URL: `https://5sim.net/v1`
+- Auth: `Authorization: Bearer $FIVESIM_API_KEY` header, `Accept: application/json`. The token is generated from the 5sim account: profile icon (top right) → "Get API key" — it's used directly as the bearer token, no separate OAuth exchange.
+- **Open item to confirm before building:** 5sim's support docs mention two protocols — "5SIM protocol" (current) and "API1" (deprecated, for older integrations) — each with its own API key. The endpoints below are the classic `/v1/...` REST paths; confirm in the 5sim dashboard which protocol the generated key is issued for before wiring `lib/5sim/client.ts`, since the deprecated path may be phased out.
+
+**Products & pricing**
+| Endpoint | Method | Purpose |
+|---|---|---|
+| `/guest/countries` | GET | List available countries/operators |
+| `/guest/products/{country}/{operator}` | GET | Available products + pricing for a country/operator |
+| `/guest/prices?country=&product=` | GET | Full price list, optionally filtered |
+
+**Purchase**
+| Endpoint | Method | Purpose |
+|---|---|---|
+| `/user/buy/activation/{country}/{operator}/{product}` | GET | Buy an activation number (params: `forwarding`, `number`, `reuse`, `voice`, `ref`, `maxPrice`) |
+| `/user/reuse/{product}/{number}` | GET | Repurchase a previously used number for the same product |
+
+**Order management**
+| Endpoint | Method | Purpose |
+|---|---|---|
+| `/user/check/{id}` | GET | Poll order status + retrieve received SMS |
+| `/user/sms/inbox/{id}` | GET | Full SMS inbox for a rented number |
+| `/user/finish/{id}` | GET | Mark order complete |
+| `/user/cancel/{id}` | GET | Cancel a pending order (refund path) |
+| `/user/ban/{id}` | GET | Ban a number that didn't work |
+
+**Account**
+| Endpoint | Method | Purpose |
+|---|---|---|
+| `/user/profile` | GET | Account balance + rating — poll this for the admin panel's "5sim balance" widget |
+| `/user/orders` | GET | Order history (params: `category`, `limit`, `offset`, `order`, `reverse`) |
+
+**Rate limits:** ~100 requests/second per IP and per API key; buy operations are more tightly throttled — the purchase flow and the SMS-polling job should both have backoff/retry handling, not tight loops.
+
+**Status values:** 5sim's `check` endpoint returns a status string per order (commonly `PENDING`, `RECEIVED`, `CANCELED`, `TIMEOUT`, `FINISHED`, `BANNED` in their ecosystem) — confirm the exact set and casing with a live test call early in Phase 4, then map it to our internal `orders.status` enum rather than storing 5sim's raw string directly.
+- 5sim does not push webhooks for SMS arrival — our own polling job (hitting `/user/check/{id}`) is the source of truth for "did the code arrive yet."
+
+Sources: [5SIM API Docs](https://5sim.net/docs), [Working with API](https://5sim.net/support/working-with-api)
 
 ## Paystack integration
 - Funding flow: client requests a top-up -> server creates a Paystack transaction (amount in kobo, minimum ₦500) -> client is redirected to Paystack's hosted checkout -> Paystack sends a signed webhook on completion -> server verifies signature, checks idempotency by reference, credits the wallet via a ledger entry (type=`topup`).

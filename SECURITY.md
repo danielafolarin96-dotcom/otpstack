@@ -1,7 +1,7 @@
 # OtpStack — Security Policy (SECURITY.md)
 
 ## Secrets & keys
-- `5SIM_API_KEY`, `PAYSTACK_SECRET_KEY`, `SUPABASE_SERVICE_ROLE_KEY` live only in Vercel environment variables (and local `.env.local`, gitignored). Never exposed to the client bundle.
+- `FIVESIM_API_KEY`, `PAYSTACK_SECRET_KEY`, `SUPABASE_SERVICE_ROLE_KEY` live only in Vercel environment variables (and local `.env.local`, gitignored). Never exposed to the client bundle.
 - Rotate a key immediately if it is ever accidentally committed or logged.
 - `PAYSTACK_PUBLIC_KEY` and `NEXT_PUBLIC_SUPABASE_ANON_KEY` are the only credentials allowed client-side.
 
@@ -15,7 +15,7 @@
 - Every debit for a number purchase and every auto-refund is logged against its triggering order ID.
 
 ## 5sim integration
-- `5SIM_API_KEY` is used server-side only, via `lib/5sim/client.ts`. Nothing client-side ever calls 5sim directly.
+- `FIVESIM_API_KEY` is used server-side only, via `lib/5sim/client.ts`. Nothing client-side ever calls 5sim directly.
 - Purchase, status polling, and cancellation happen through our own API routes, which enforce ownership (a user can only check/cancel their own order) and rate limits.
 
 ## Auth & access

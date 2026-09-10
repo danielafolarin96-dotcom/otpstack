@@ -11,7 +11,7 @@
 ## Conventions
 - All money values stored as integer **kobo** (₦1 = 100 kobo) — never floats, to avoid rounding errors.
 - 5sim upstream prices are stored as received alongside a computed NGN price from the pricing engine — never hardcode a fixed USD/NGN conversion; always read from `fx_rates` + `pricing_rules` (see ARCHITECTURE.md).
-- Server-only secrets (`5SIM_API_KEY`, `PAYSTACK_SECRET_KEY`, `SUPABASE_SERVICE_ROLE_KEY`) are only ever referenced in server components, API routes (`app/api/**/route.ts`), or server actions — never in client components, never shipped to the browser.
+- Server-only secrets (`FIVESIM_API_KEY`, `PAYSTACK_SECRET_KEY`, `SUPABASE_SERVICE_ROLE_KEY`) are only ever referenced in server components, API routes (`app/api/**/route.ts`), or server actions — never in client components, never shipped to the browser.
 - Folder structure:
   - `app/(marketing)/` — public landing page
   - `app/(dashboard)/` — authenticated user dashboard
