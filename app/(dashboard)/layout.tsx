@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { DashboardNav } from "./dashboard-nav";
+import { MobileNavMenu } from "./mobile-nav-menu";
 import { SignOutButton } from "./sign-out-button";
 
 export default async function DashboardLayout({
@@ -26,12 +27,12 @@ export default async function DashboardLayout({
   return (
     <div className="flex flex-1 flex-col md:flex-row">
       <aside className="flex w-full flex-col border-b border-line bg-paper-raised md:w-64 md:shrink-0 md:justify-between md:border-b-0 md:border-r md:px-4 md:py-6">
-        <div className="flex items-center gap-3 px-4 py-3 md:flex-col md:items-stretch md:gap-8 md:px-0 md:py-0">
+        <div className="flex items-center justify-between gap-3 px-4 py-3 md:flex-col md:items-stretch md:justify-start md:gap-8 md:px-0 md:py-0">
           <span className="shrink-0 px-2 font-display text-lg font-bold text-ink md:text-xl">
             OtpStack
           </span>
           <DashboardNav isAdmin={profile?.is_admin ?? false} />
-          <SignOutButton iconOnly className="shrink-0 md:hidden" />
+          <MobileNavMenu isAdmin={profile?.is_admin ?? false} />
         </div>
         <div className="hidden md:block">
           <SignOutButton />

@@ -2,26 +2,19 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { isNavItemActive, navItemsFor } from "./nav-items";
 
-const NAV_ITEMS = [
-  { label: "Overview", href: "/dashboard" },
-  { label: "Get a number", href: "/dashboard/get-a-number" },
-  { label: "Order history", href: "/dashboard/orders" },
-  { label: "Wallet & top-up", href: "/dashboard/wallet" },
-  { label: "Settings", href: "/dashboard/settings" },
-];
-
+// Desktop only — at mobile widths the sidebar is replaced entirely by
+// MobileNavMenu (a hamburger + dropdown), so this never needs to lay its
+// items out in a row.
 export function DashboardNav({ isAdmin = false }: { isAdmin?: boolean }) {
   const pathname = usePathname();
-  const navItems = isAdmin ? [...NAV_ITEMS, { label: "Admin", href: "/admin" }] : NAV_ITEMS;
+  const navItems = navItemsFor(isAdmin);
 
   return (
-    <nav className="flex min-w-0 flex-1 gap-1 overflow-x-auto md:flex-col md:overflow-visible">
+    <nav className="hidden min-w-0 flex-1 flex-col gap-1 md:flex">
       {navItems.map((item) => {
-        const isActive =
-          item.href === "/dashboard"
-            ? pathname === "/dashboard"
-            : pathname.startsWith(item.href);
+        const isActive = isNavItemActive(pathname, item.href);
 
         return (
           <Link
