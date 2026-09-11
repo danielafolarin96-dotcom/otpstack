@@ -337,7 +337,40 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      create_order_and_debit_wallet: {
+        Args: {
+          p_country_code: string
+          p_expires_at: string
+          p_fivesim_order_id: string
+          p_metadata?: Json
+          p_phone_number: string
+          p_price_kobo: number
+          p_service_id: string
+          p_upstream_cost_kobo: number
+          p_user_id: string
+        }
+        Returns: {
+          completed_at: string | null
+          country_code: string
+          created_at: string
+          expires_at: string
+          fivesim_order_id: string
+          id: string
+          otp_code: string | null
+          phone_number: string
+          price_kobo: number
+          service_id: string
+          status: Database["public"]["Enums"]["order_status"]
+          upstream_cost_kobo: number
+          user_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "orders"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
     }
     Enums: {
       order_status:
