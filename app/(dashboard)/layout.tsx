@@ -25,8 +25,9 @@ export default async function DashboardLayout({
             OtpStack
           </span>
           <DashboardNav />
+          <SignOutButton iconOnly className="shrink-0 md:hidden" />
         </div>
-        <div className="border-t border-line px-4 py-2 md:border-t-0 md:px-0 md:py-0">
+        <div className="hidden md:block">
           <SignOutButton />
         </div>
       </aside>
