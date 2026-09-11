@@ -87,6 +87,69 @@ export type Database = {
         }
         Relationships: []
       }
+      orders: {
+        Row: {
+          completed_at: string | null
+          country_code: string
+          created_at: string
+          expires_at: string
+          fivesim_order_id: string
+          id: string
+          otp_code: string | null
+          phone_number: string
+          price_kobo: number
+          service_id: string
+          status: Database["public"]["Enums"]["order_status"]
+          upstream_cost_kobo: number
+          user_id: string
+        }
+        Insert: {
+          completed_at?: string | null
+          country_code: string
+          created_at?: string
+          expires_at: string
+          fivesim_order_id: string
+          id?: string
+          otp_code?: string | null
+          phone_number: string
+          price_kobo: number
+          service_id: string
+          status?: Database["public"]["Enums"]["order_status"]
+          upstream_cost_kobo: number
+          user_id: string
+        }
+        Update: {
+          completed_at?: string | null
+          country_code?: string
+          created_at?: string
+          expires_at?: string
+          fivesim_order_id?: string
+          id?: string
+          otp_code?: string | null
+          phone_number?: string
+          price_kobo?: number
+          service_id?: string
+          status?: Database["public"]["Enums"]["order_status"]
+          upstream_cost_kobo?: number
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "orders_service_id_fkey"
+            columns: ["service_id"]
+            isOneToOne: false
+            referencedRelation: "services"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "orders_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       pricing_rules: {
         Row: {
           country_id: string | null
@@ -228,6 +291,13 @@ export type Database = {
         }
         Relationships: [
           {
+            foreignKeyName: "wallet_transactions_order_id_fkey"
+            columns: ["order_id"]
+            isOneToOne: false
+            referencedRelation: "orders"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "wallet_transactions_user_id_fkey"
             columns: ["user_id"]
             isOneToOne: false
@@ -270,6 +340,12 @@ export type Database = {
       [_ in never]: never
     }
     Enums: {
+      order_status:
+        | "pending"
+        | "sms_received"
+        | "expired_refunded"
+        | "cancelled_refunded"
+        | "banned"
       pricing_markup_type: "percent" | "flat_kobo" | "tiered"
       pricing_rule_scope: "global" | "service" | "country" | "service_country"
       wallet_transaction_type:
@@ -407,6 +483,13 @@ export const Constants = {
   },
   public: {
     Enums: {
+      order_status: [
+        "pending",
+        "sms_received",
+        "expired_refunded",
+        "cancelled_refunded",
+        "banned",
+      ],
       pricing_markup_type: ["percent", "flat_kobo", "tiered"],
       pricing_rule_scope: ["global", "service", "country", "service_country"],
       wallet_transaction_type: [
