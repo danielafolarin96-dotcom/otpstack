@@ -1,3 +1,5 @@
+import { FreezeToggle } from "./freeze-toggle";
+
 type AdminUserRow = {
   id: string;
   full_name: string;
@@ -28,6 +30,7 @@ export function UsersTable({ users }: { users: AdminUserRow[] }) {
             <th className="px-4 py-3 font-medium">Wallet balance</th>
             <th className="px-4 py-3 font-medium">Status</th>
             <th className="px-4 py-3 font-medium">Joined</th>
+            <th className="px-4 py-3 font-medium">Action</th>
           </tr>
         </thead>
         <tbody>
@@ -68,6 +71,9 @@ export function UsersTable({ users }: { users: AdminUserRow[] }) {
                   month: "short",
                   year: "numeric",
                 })}
+              </td>
+              <td className="px-4 py-3">
+                <FreezeToggle userId={user.id} isFrozen={user.is_frozen} />
               </td>
             </tr>
           ))}

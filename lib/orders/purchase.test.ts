@@ -81,6 +81,7 @@ function fakeAdminClient(
 }
 
 const baseConfigs = (): Record<string, { data: unknown; error: unknown }> => ({
+  users: { data: { is_frozen: false }, error: null },
   services: { data: SERVICE, error: null },
   countries: { data: COUNTRY, error: null },
   pricing_rules: { data: [GLOBAL_RULE], error: null },
@@ -130,6 +131,29 @@ describe("purchaseNumber", () => {
       }),
     );
     expect(cancelOrder).not.toHaveBeenCalled();
+  });
+
+  it("rejects with 403 when the account is frozen, before ever calling 5sim", async () => {
+    const configs = baseConfigs();
+    configs.users = { data: { is_frozen: true }, error: null };
+    const client = fakeAdminClient(configs, baseRpcResult());
+
+    await expect(
+      purchaseNumber(client, { userId: "user-1", serviceId: SERVICE.id, countryId: COUNTRY.id }),
+    ).rejects.toMatchObject({ status: 403 });
+    expect(getProductPrices).not.toHaveBeenCalled();
+    expect(buyActivation).not.toHaveBeenCalled();
+  });
+
+  it("rejects with 404 when the user row doesn't exist", async () => {
+    const configs = baseConfigs();
+    configs.users = { data: null, error: null };
+    const client = fakeAdminClient(configs, baseRpcResult());
+
+    await expect(
+      purchaseNumber(client, { userId: "user-1", serviceId: SERVICE.id, countryId: COUNTRY.id }),
+    ).rejects.toMatchObject({ status: 404, message: "User not found" });
+    expect(buyActivation).not.toHaveBeenCalled();
   });
 
   it("rejects with 404 when the service doesn't exist or is inactive", async () => {

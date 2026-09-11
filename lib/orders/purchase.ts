@@ -47,6 +47,21 @@ export async function purchaseNumber(
   admin: SupabaseClient<Database>,
   params: { userId: string; serviceId: string; countryId: string },
 ): Promise<PurchaseResult> {
+  // Freeze check first, before any 5sim call or DB write — a frozen
+  // account shouldn't even trigger the upstream price lookup. Only blocks
+  // *new* purchases; an order already in flight when an account gets
+  // frozen still resolves through its normal expiry/refund path untouched.
+  const { data: userRow, error: userError } = await admin
+    .from("users")
+    .select("is_frozen")
+    .eq("id", params.userId)
+    .maybeSingle();
+  if (userError) throw userError;
+  if (!userRow) throw new PurchaseError("User not found", 404);
+  if (userRow.is_frozen) {
+    throw new PurchaseError("Your account is frozen — contact support", 403);
+  }
+
   const [serviceResult, countryResult] = await Promise.all([
     admin.from("services").select("*").eq("id", params.serviceId).eq("is_active", true).maybeSingle(),
     admin.from("countries").select("*").eq("id", params.countryId).eq("is_active", true).maybeSingle(),

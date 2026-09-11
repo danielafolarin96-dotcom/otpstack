@@ -14,6 +14,25 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
   }
 
+  // RLS scopes this to the caller's own row — no admin client needed.
+  // Only blocks *new* top-up attempts; doesn't touch anything already in
+  // flight.
+  const { data: profile, error: profileError } = await supabase
+    .from("users")
+    .select("is_frozen")
+    .eq("id", user.id)
+    .single();
+  if (profileError) {
+    console.error("Failed to check account status before top-up:", profileError);
+    return NextResponse.json({ error: "Failed to verify account status" }, { status: 500 });
+  }
+  if (profile.is_frozen) {
+    return NextResponse.json(
+      { error: "Your account is frozen — contact support" },
+      { status: 403 },
+    );
+  }
+
   let body: unknown;
   try {
     body = await request.json();
