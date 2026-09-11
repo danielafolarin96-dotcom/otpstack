@@ -59,6 +59,12 @@ export default async function AdminLayout({ children }: { children: React.ReactN
           >
             Pricing rules
           </Link>
+          <Link
+            href="/admin/audit-log"
+            className="rounded-[10px] px-3 py-2 text-sm font-medium text-text-dim transition-colors hover:bg-paper hover:text-text"
+          >
+            Audit log
+          </Link>
         </nav>
         <Link
           href="/dashboard"
