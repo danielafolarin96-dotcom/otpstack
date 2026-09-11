@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { verifyPaystackSignature } from "@/lib/paystack/verify-signature";
 import { recordWalletTransaction } from "@/lib/wallet/ledger";
+import { maybeGrantFirstTopupMatch } from "@/lib/wallet/first-topup-promo";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 interface PaystackWebhookPayload {
@@ -57,6 +58,15 @@ export async function POST(request: Request) {
       reference: payload.data.reference,
       metadata: { paystack_event: payload.event },
     });
+
+    // Signup growth incentive: ₦500 match on a user's first real top-up
+    // only. Called unconditionally (not just when the top-up above was
+    // newly inserted) because maybeGrantFirstTopupMatch is itself
+    // idempotent — that also means a retried webhook, or a webhook that
+    // succeeded here but failed before, self-heals instead of losing the
+    // promo silently. See lib/wallet/first-topup-promo.ts for the full
+    // reasoning.
+    await maybeGrantFirstTopupMatch(supabase, userId);
   } catch (error) {
     console.error("Paystack webhook: failed to record wallet transaction", error);
     return NextResponse.json({ error: "Failed to process" }, { status: 500 });
