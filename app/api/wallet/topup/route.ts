@@ -1,8 +1,14 @@
 import { NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { initializeTransaction } from "@/lib/paystack/client";
 import { isValidTopupAmount, MIN_TOPUP_KOBO } from "@/lib/paystack/validate-topup-amount";
+import { checkRateLimit, getClientIp } from "@/lib/rate-limit/check";
+
+const TOPUP_WINDOW_SECONDS = 60 * 60;
+const TOPUP_MAX_PER_USER = 10;
+const TOPUP_MAX_PER_IP = 20;
 
 export async function POST(request: Request) {
   const supabase = await createClient();
@@ -30,6 +36,26 @@ export async function POST(request: Request) {
     return NextResponse.json(
       { error: "Your account is frozen — contact support" },
       { status: 403 },
+    );
+  }
+
+  const admin = createAdminClient();
+  const [allowedForUser, allowedForIp] = await Promise.all([
+    checkRateLimit(admin, {
+      key: `topup:user:${user.id}`,
+      windowSeconds: TOPUP_WINDOW_SECONDS,
+      max: TOPUP_MAX_PER_USER,
+    }),
+    checkRateLimit(admin, {
+      key: `topup:ip:${getClientIp(request)}`,
+      windowSeconds: TOPUP_WINDOW_SECONDS,
+      max: TOPUP_MAX_PER_IP,
+    }),
+  ]);
+  if (!allowedForUser || !allowedForIp) {
+    return NextResponse.json(
+      { error: "Too many top-up attempts. Try again later." },
+      { status: 429 },
     );
   }
 

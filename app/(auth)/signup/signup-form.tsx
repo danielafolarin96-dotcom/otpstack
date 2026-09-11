@@ -33,22 +33,20 @@ export function SignupForm() {
     }
 
     setLoading(true);
-    const supabase = createClient();
-    const { data, error } = await supabase.auth.signUp({
-      email,
-      password,
-      options: {
-        data: { full_name: fullName, username },
-      },
+    const response = await fetch("/api/auth/signup", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ fullName, email, username, password }),
     });
-
+    const result = await response.json();
     setLoading(false);
-    if (error) {
-      setError(error.message);
+
+    if (!response.ok) {
+      setError(result.error ?? "Something went wrong");
       return;
     }
 
-    if (!data.session) {
+    if (!result.hasSession) {
       // Signup succeeded but no session came back — most likely email
       // confirmation is still enabled on the Supabase project. The product
       // spec calls for no email-verification gate, so that setting needs

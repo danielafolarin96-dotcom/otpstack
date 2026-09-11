@@ -52,7 +52,7 @@ const FIVESIM_ORDER = {
 };
 
 function fakeAdminClient(
-  configs: Record<string, { data: unknown; error: unknown }>,
+  configs: Record<string, { data: unknown; error: unknown; count?: number }>,
   rpcResult: { data: unknown; error: unknown },
 ) {
   const from = vi.fn((table: string) => {
@@ -60,6 +60,7 @@ function fakeAdminClient(
     const builder: {
       select: () => typeof builder;
       eq: () => typeof builder;
+      in: () => typeof builder;
       order: () => typeof builder;
       limit: () => typeof builder;
       maybeSingle: () => Promise<unknown>;
@@ -68,6 +69,7 @@ function fakeAdminClient(
     } = {
       select: () => builder,
       eq: () => builder,
+      in: () => builder,
       order: () => builder,
       limit: () => builder,
       maybeSingle: () => Promise.resolve(result),
@@ -80,8 +82,9 @@ function fakeAdminClient(
   return { from, rpc } as unknown as SupabaseClient<Database>;
 }
 
-const baseConfigs = (): Record<string, { data: unknown; error: unknown }> => ({
+const baseConfigs = (): Record<string, { data: unknown; error: unknown; count?: number }> => ({
   users: { data: { is_frozen: false }, error: null },
+  orders: { data: null, error: null, count: 0 },
   services: { data: SERVICE, error: null },
   countries: { data: COUNTRY, error: null },
   pricing_rules: { data: [GLOBAL_RULE], error: null },
@@ -153,6 +156,18 @@ describe("purchaseNumber", () => {
     await expect(
       purchaseNumber(client, { userId: "user-1", serviceId: SERVICE.id, countryId: COUNTRY.id }),
     ).rejects.toMatchObject({ status: 404, message: "User not found" });
+    expect(buyActivation).not.toHaveBeenCalled();
+  });
+
+  it("rejects with 429 when the user already holds the max concurrent orders, before ever calling 5sim", async () => {
+    const configs = baseConfigs();
+    configs.orders = { data: null, error: null, count: 3 };
+    const client = fakeAdminClient(configs, baseRpcResult());
+
+    await expect(
+      purchaseNumber(client, { userId: "user-1", serviceId: SERVICE.id, countryId: COUNTRY.id }),
+    ).rejects.toMatchObject({ status: 429 });
+    expect(getProductPrices).not.toHaveBeenCalled();
     expect(buyActivation).not.toHaveBeenCalled();
   });
 

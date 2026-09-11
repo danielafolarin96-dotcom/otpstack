@@ -242,6 +242,24 @@ export type Database = {
           },
         ]
       }
+      rate_limits: {
+        Row: {
+          count: number
+          key: string
+          window_start: string
+        }
+        Insert: {
+          count?: number
+          key: string
+          window_start?: string
+        }
+        Update: {
+          count?: number
+          key?: string
+          window_start?: string
+        }
+        Relationships: []
+      }
       services: {
         Row: {
           category: string
@@ -378,6 +396,10 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      check_rate_limit: {
+        Args: { p_key: string; p_max_count: number; p_window_seconds: number }
+        Returns: boolean
+      }
       create_order_and_debit_wallet: {
         Args: {
           p_country_code: string

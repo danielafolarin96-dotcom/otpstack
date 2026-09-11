@@ -1,9 +1,19 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { POST } from "./route";
 import { initializeTransaction } from "@/lib/paystack/client";
+import { checkRateLimit } from "@/lib/rate-limit/check";
 
 vi.mock("@/lib/paystack/client", () => ({
   initializeTransaction: vi.fn(),
+}));
+
+vi.mock("@/lib/rate-limit/check", () => ({
+  checkRateLimit: vi.fn(),
+  getClientIp: () => "127.0.0.1",
+}));
+
+vi.mock("@/lib/supabase/admin", () => ({
+  createAdminClient: () => ({}),
 }));
 
 const getUser = vi.fn();
@@ -16,6 +26,10 @@ vi.mock("@/lib/supabase/server", () => ({
       from: () => ({ select: () => ({ eq: () => ({ single }) }) }),
     }),
 }));
+
+beforeEach(() => {
+  vi.mocked(checkRateLimit).mockResolvedValue(true);
+});
 
 function makeRequest(body: unknown) {
   return new Request("http://localhost:3000/api/wallet/topup", {
@@ -44,6 +58,19 @@ describe("POST /api/wallet/topup", () => {
     expect(initializeTransaction).toHaveBeenCalledWith(
       expect.objectContaining({ email: USER.email, amountKobo: 50_000 }),
     );
+  });
+
+  it("rejects with 429 and never contacts Paystack once the rate limit is hit", async () => {
+    getUser.mockResolvedValue({ data: { user: USER } });
+    single.mockResolvedValue({ data: { is_frozen: false }, error: null });
+    vi.mocked(checkRateLimit).mockResolvedValue(false);
+
+    const response = await POST(makeRequest({ amountKobo: 50_000 }));
+    const json = await response.json();
+
+    expect(response.status).toBe(429);
+    expect(json.error).toMatch(/too many/i);
+    expect(initializeTransaction).not.toHaveBeenCalled();
   });
 
   it("rejects with 403 and never contacts Paystack when the account is frozen", async () => {

@@ -5,6 +5,11 @@ import { buyActivation, cancelOrder, getProductPrices } from "@/lib/5sim/client"
 import { fetchAllPricingRules, fetchLatestFxRate, priceFromRulesAndRate } from "@/lib/pricing/engine";
 
 const ORDER_TTL_MINUTES = 10;
+// SECURITY.md's rate-limiting example for purchase: "a cap on concurrent
+// active/pending orders" — distinct from the time-windowed limits in
+// app/api/orders/route.ts, this bounds how many numbers one user can be
+// holding at once regardless of how spread out in time the purchases were.
+const MAX_CONCURRENT_ORDERS_PER_USER = 3;
 const UPSTREAM_CURRENCY_PAIR = "USD_NGN"; // 5sim prices observed in USD — see lib/5sim/client.ts
 
 export class PurchaseError extends Error {
@@ -60,6 +65,19 @@ export async function purchaseNumber(
   if (!userRow) throw new PurchaseError("User not found", 404);
   if (userRow.is_frozen) {
     throw new PurchaseError("Your account is frozen — contact support", 403);
+  }
+
+  const { count: concurrentOrders, error: concurrentOrdersError } = await admin
+    .from("orders")
+    .select("id", { count: "exact", head: true })
+    .eq("user_id", params.userId)
+    .in("status", ["pending", "sms_received"]);
+  if (concurrentOrdersError) throw concurrentOrdersError;
+  if ((concurrentOrders ?? 0) >= MAX_CONCURRENT_ORDERS_PER_USER) {
+    throw new PurchaseError(
+      `You can only hold ${MAX_CONCURRENT_ORDERS_PER_USER} active numbers at once — finish or let one expire first`,
+      429,
+    );
   }
 
   const [serviceResult, countryResult] = await Promise.all([
