@@ -4,6 +4,8 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { checkOrder } from "@/lib/5sim/client";
 import { extractOtpCode, mapFiveSimOrderToStatus, type OrderStatus } from "@/lib/5sim/status";
 import { expireAndRefundOrder } from "@/lib/orders/expire-and-refund";
+import type { SupabaseClient } from "@supabase/supabase-js";
+import type { Database } from "@/types/database";
 
 interface OrderRow {
   id: string;
@@ -24,6 +26,12 @@ function serialize(order: OrderRow) {
     otpCode: order.otp_code,
     expiresAt: order.expires_at,
   };
+}
+
+async function refetchOrder(admin: SupabaseClient<Database>, id: string): Promise<OrderRow> {
+  const { data, error } = await admin.from("orders").select("*").eq("id", id).single();
+  if (error) throw error;
+  return data as unknown as OrderRow;
 }
 
 // Polled by the dashboard's active-number panel every few seconds while an
@@ -54,8 +62,14 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
   // comment), so a user polling their own expired order is what actually
   // resolves it today.
   if (new Date(order.expires_at).getTime() <= Date.now()) {
-    await expireAndRefundOrder(admin, order);
-    return NextResponse.json({ order: { ...serialize(order), status: "expired_refunded" } });
+    const { refunded } = await expireAndRefundOrder(admin, order);
+    if (refunded) {
+      return NextResponse.json({ order: { ...serialize(order), status: "expired_refunded" } });
+    }
+    // Someone else (e.g. this same order's sms_received update below, on a
+    // near-simultaneous request) already resolved it — report what it
+    // actually became, not what we assumed.
+    return NextResponse.json({ order: serialize(await refetchOrder(admin, order.id)) });
   }
 
   let fivesimOrder;
@@ -88,13 +102,26 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
   };
   if (otpCode) updates.otp_code = otpCode;
 
+  // Audit fix: only apply this update if the order is still 'pending' right
+  // now — otherwise the cron/expiry fallback could have resolved it
+  // (expired_refunded) between our read above and this write, and we'd
+  // overwrite that with sms_received despite the user having already been
+  // refunded for it.
   const { data: updated, error: updateError } = await admin
     .from("orders")
     .update(updates)
     .eq("id", order.id)
+    .eq("status", "pending")
     .select()
-    .single();
+    .maybeSingle();
   if (updateError) throw updateError;
+
+  if (!updated) {
+    console.log(
+      `Order ${order.id} was already resolved by another path during status poll — reporting its actual state instead of overwriting it.`,
+    );
+    return NextResponse.json({ order: serialize(await refetchOrder(admin, order.id)) });
+  }
 
   return NextResponse.json({ order: serialize(updated) });
 }

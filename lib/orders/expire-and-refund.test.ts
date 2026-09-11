@@ -15,12 +15,21 @@ const ORDER = {
   price_kobo: 150_000,
 };
 
-function fakeAdminClient(orderUpdateResult: { error: unknown }, ledgerInsertResult: { error: unknown }) {
+function fakeAdminClient(
+  claimResult: { data: unknown; error: unknown },
+  ledgerInsertResult: { error: unknown },
+) {
   const from = vi.fn((table: string) => {
     if (table === "orders") {
       return {
         update: () => ({
-          eq: () => Promise.resolve(orderUpdateResult),
+          eq: () => ({
+            eq: () => ({
+              select: () => ({
+                maybeSingle: () => Promise.resolve(claimResult),
+              }),
+            }),
+          }),
         }),
       };
     }
@@ -39,33 +48,45 @@ beforeEach(() => {
 });
 
 describe("expireAndRefundOrder", () => {
-  it("cancels upstream, marks the order expired_refunded, and refunds the ledger", async () => {
+  it("claims the order, cancels upstream, and refunds the ledger", async () => {
     vi.mocked(cancelOrder).mockResolvedValue({} as never);
-    const client = fakeAdminClient({ error: null }, { error: null });
+    const client = fakeAdminClient({ data: { ...ORDER, status: "expired_refunded" }, error: null }, { error: null });
 
-    await expireAndRefundOrder(client, ORDER);
+    const result = await expireAndRefundOrder(client, ORDER);
 
+    expect(result).toEqual({ refunded: true });
     expect(cancelOrder).toHaveBeenCalledWith("999");
   });
 
   it("still refunds even when the upstream cancel call fails", async () => {
     vi.mocked(cancelOrder).mockRejectedValue(new Error("already expired upstream"));
-    const client = fakeAdminClient({ error: null }, { error: null });
+    const client = fakeAdminClient({ data: { ...ORDER, status: "expired_refunded" }, error: null }, { error: null });
 
-    await expect(expireAndRefundOrder(client, ORDER)).resolves.toBeUndefined();
+    await expect(expireAndRefundOrder(client, ORDER)).resolves.toEqual({ refunded: true });
   });
 
-  it("throws if updating the order status fails, without swallowing the error", async () => {
-    vi.mocked(cancelOrder).mockResolvedValue({} as never);
-    const client = fakeAdminClient({ error: { message: "db down" } }, { error: null });
+  it("throws if the claim update fails outright, without swallowing the error", async () => {
+    const client = fakeAdminClient({ data: null, error: { message: "db down" } }, { error: null });
 
     await expect(expireAndRefundOrder(client, ORDER)).rejects.toMatchObject({ message: "db down" });
   });
 
   it("propagates a ledger insert failure instead of silently dropping the refund", async () => {
     vi.mocked(cancelOrder).mockResolvedValue({} as never);
-    const client = fakeAdminClient({ error: null }, { error: { message: "ledger insert failed", code: "XX000" } });
+    const client = fakeAdminClient(
+      { data: { ...ORDER, status: "expired_refunded" }, error: null },
+      { error: { message: "ledger insert failed", code: "XX000" } },
+    );
 
     await expect(expireAndRefundOrder(client, ORDER)).rejects.toMatchObject({ message: "ledger insert failed" });
+  });
+
+  it("skips the refund and reports refunded:false when another path already resolved the order (zero rows claimed)", async () => {
+    const client = fakeAdminClient({ data: null, error: null }, { error: null });
+
+    const result = await expireAndRefundOrder(client, ORDER);
+
+    expect(result).toEqual({ refunded: false });
+    expect(cancelOrder).not.toHaveBeenCalled();
   });
 });

@@ -34,11 +34,17 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "Failed to fetch expired orders" }, { status: 500 });
   }
 
-  const results = { processed: 0, failed: 0 };
+  const results = { processed: 0, skipped: 0, failed: 0 };
   for (const order of expiredOrders ?? []) {
     try {
-      await expireAndRefundOrder(admin, order);
-      results.processed += 1;
+      const { refunded } = await expireAndRefundOrder(admin, order);
+      if (refunded) {
+        results.processed += 1;
+      } else {
+        // Already resolved by another path (see expireAndRefundOrder's
+        // comment) — not a failure, just nothing for this sweep to do.
+        results.skipped += 1;
+      }
     } catch (err) {
       console.error(`Failed to expire/refund order ${order.id}:`, err);
       results.failed += 1;

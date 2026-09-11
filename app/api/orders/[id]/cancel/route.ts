@@ -29,6 +29,29 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     return NextResponse.json({ error: "This order has already expired" }, { status: 409 });
   }
 
+  // Audit fix: the checks above only look at what we read a moment ago —
+  // the cron/status-poll expiry fallback could resolve this exact order
+  // concurrently (e.g. it just crossed expires_at on another request).
+  // This conditional update is what actually and atomically claims the
+  // order: it only succeeds if status is still 'pending' right now, and we
+  // only touch 5sim/the wallet if we won that race.
+  const { data: claimed, error: claimError } = await admin
+    .from("orders")
+    .update({ status: "cancelled_refunded", completed_at: new Date().toISOString() })
+    .eq("id", order.id)
+    .eq("status", "pending")
+    .select()
+    .maybeSingle();
+
+  if (claimError) {
+    console.error("Failed to update order after cancel:", claimError);
+    return NextResponse.json({ error: "Failed to cancel order" }, { status: 500 });
+  }
+  if (!claimed) {
+    console.log(`Order ${order.id} was already resolved by another path — cancel request rejected.`);
+    return NextResponse.json({ error: "This order was already resolved" }, { status: 409 });
+  }
+
   try {
     await cancelOrder(order.fivesim_order_id);
   } catch (err) {
@@ -36,15 +59,6 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     // own cancel call fails; we're not going to keep charging them for a
     // number they no longer want.
     console.error(`Failed to cancel upstream 5sim order ${order.fivesim_order_id}:`, err);
-  }
-
-  const { error: updateError } = await admin
-    .from("orders")
-    .update({ status: "cancelled_refunded", completed_at: new Date().toISOString() })
-    .eq("id", order.id);
-  if (updateError) {
-    console.error("Failed to update order after cancel:", updateError);
-    return NextResponse.json({ error: "Failed to cancel order" }, { status: 500 });
   }
 
   try {
