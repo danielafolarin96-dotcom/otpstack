@@ -15,7 +15,7 @@ export function DashboardNav() {
   const pathname = usePathname();
 
   return (
-    <nav className="flex flex-col gap-1">
+    <nav className="flex min-w-0 flex-1 gap-1 overflow-x-auto md:flex-col md:overflow-visible">
       {NAV_ITEMS.map((item) => {
         const isActive =
           item.href === "/dashboard"
@@ -26,7 +26,7 @@ export function DashboardNav() {
           <Link
             key={item.href}
             href={item.href}
-            className={`rounded-[10px] px-3 py-2 text-sm font-medium transition-colors ${
+            className={`shrink-0 whitespace-nowrap rounded-[10px] px-3 py-2 text-sm font-medium transition-colors ${
               isActive
                 ? "bg-ink text-paper"
                 : "text-text-dim hover:bg-paper hover:text-text"
