@@ -11,7 +11,18 @@ function formatNaira(kobo: number) {
   return (kobo / 100).toLocaleString("en-NG", { minimumFractionDigits: 2 });
 }
 
-export function ServiceCatalogGrid({ entries }: { entries: CatalogGridEntry[] }) {
+// onBuy is optional: the landing page (public, unauthenticated) renders
+// tiles read-only; the dashboard's "Get a number" page passes a handler to
+// make them purchasable.
+export function ServiceCatalogGrid({
+  entries,
+  onBuy,
+  buyingServiceId,
+}: {
+  entries: CatalogGridEntry[];
+  onBuy?: (serviceId: string) => void;
+  buyingServiceId?: string | null;
+}) {
   const categories = useMemo(() => {
     const set = new Set(entries.map((e) => e.service.category));
     return ["All", ...Array.from(set).sort()];
@@ -40,20 +51,33 @@ export function ServiceCatalogGrid({ entries }: { entries: CatalogGridEntry[] })
       </div>
 
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4">
-        {filtered.map(({ service, price }) => (
-          <div
-            key={service.id}
-            className="flex flex-col items-center gap-2 rounded-[14px] border border-line bg-paper-raised p-4 text-center"
-          >
-            <div className="flex h-12 w-12 items-center justify-center rounded-[10px] border border-line bg-paper font-display text-lg font-bold text-ink">
-              {service.name.charAt(0)}
+        {filtered.map(({ service, price }) => {
+          const isBuying = buyingServiceId === service.id;
+          return (
+            <div
+              key={service.id}
+              className="flex flex-col items-center gap-2 rounded-[14px] border border-line bg-paper-raised p-4 text-center"
+            >
+              <div className="flex h-12 w-12 items-center justify-center rounded-[10px] border border-line bg-paper font-display text-lg font-bold text-ink">
+                {service.name.charAt(0)}
+              </div>
+              <p className="text-sm font-medium text-text">{service.name}</p>
+              <p className="font-technical text-sm text-signal">
+                {price ? `₦${formatNaira(price.priceKobo)}` : "—"}
+              </p>
+              {onBuy && (
+                <button
+                  type="button"
+                  disabled={!price || Boolean(buyingServiceId)}
+                  onClick={() => onBuy(service.id)}
+                  className="mt-1 w-full rounded-[10px] bg-signal px-3 py-1.5 text-xs font-semibold text-paper transition-colors hover:bg-signal-bright disabled:opacity-50"
+                >
+                  {isBuying ? "Buying…" : price ? "Buy" : "Unavailable"}
+                </button>
+              )}
             </div>
-            <p className="text-sm font-medium text-text">{service.name}</p>
-            <p className="font-technical text-sm text-signal">
-              {price ? `₦${formatNaira(price.priceKobo)}` : "—"}
-            </p>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );

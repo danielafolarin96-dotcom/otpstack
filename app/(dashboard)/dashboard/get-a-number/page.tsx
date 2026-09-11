@@ -1,8 +1,8 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { computeCatalogPrices, fetchActiveCountries } from "@/lib/pricing/catalog";
-import { ServiceCatalogGrid } from "@/components/catalog/service-catalog-grid";
 import { EmptyState } from "../_components/empty-state";
 import { CountrySelect } from "./country-select";
+import { BuyableCatalogGrid } from "./buyable-catalog-grid";
 
 export default async function GetANumberPage({
   searchParams,
@@ -36,13 +36,13 @@ export default async function GetANumberPage({
         <div>
           <h1 className="font-display text-2xl font-bold text-ink">Get a number</h1>
           <p className="text-sm text-text-dim">
-            Live-priced from the pricing engine — purchasing arrives in Phase 4.
+            Your number is held for 10 minutes — cancel any time before it arrives for a full refund.
           </p>
         </div>
         <CountrySelect countries={countries} selectedId={selectedCountryId} />
       </div>
 
-      <ServiceCatalogGrid entries={entries} />
+      <BuyableCatalogGrid entries={entries} countryId={selectedCountryId} />
     </div>
   );
 }
