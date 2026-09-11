@@ -6,9 +6,15 @@ import { PaymentStatusPoller } from "./payment-status-poller";
 export default async function WalletPage({
   searchParams,
 }: {
-  searchParams: Promise<{ reference?: string }>;
+  searchParams: Promise<{ reference?: string | string[] }>;
 }) {
-  const { reference } = await searchParams;
+  const { reference: rawReference } = await searchParams;
+  // Paystack's redirect appends its own `trxref`/`reference` params on top
+  // of the `reference` we already put in callback_url, so this key can show
+  // up twice in the URL — Next.js then hands us a string[] here instead of
+  // a string. Collapse to a single value so the confirmation banner doesn't
+  // render the reference doubled up.
+  const reference = Array.isArray(rawReference) ? rawReference[0] : rawReference;
   const supabase = await createClient();
   const {
     data: { user },
