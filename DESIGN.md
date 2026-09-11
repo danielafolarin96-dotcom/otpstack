@@ -1,7 +1,7 @@
 # OtpStack — Design System (DESIGN.md)
 
 ## Direction
-Warm, calm, professional — not a loud "crypto/tech demo" look. Cream ground, single orange accent used sparingly (primary actions, emphasis, active states only). Neutral, monochrome iconography — no rainbow per-brand icon colors.
+Warm, calm, professional — not a loud "crypto/tech demo" look. Cream ground, single orange accent used sparingly (primary actions, emphasis, active states only). Neutral, monochrome iconography everywhere except service/platform logos (see "Icon tiles" below) — no rainbow colors used decoratively.
 
 ## Color tokens
 
@@ -33,7 +33,7 @@ Warm, calm, professional — not a loud "crypto/tech demo" look. Cream ground, s
 - Max content width 1080px; minimum 20px side gutter at every width.
 - Cards: 14px radius, 1px `--line` border; heavy shadow reserved for genuinely floating panels, not every card.
 - Buttons: 10px radius (not a full pill) for primary actions — pill/999px reserved for filter chips and small status badges only.
-- Icon tiles (service logos, etc.): neutral `--paper` fill, `--line` border, ink-colored initial — no per-brand rainbow colors.
+- Icon tiles: service/platform logos (catalog grid, "Get a number" page) render each brand's real logo in its own brand color, on a neutral `--paper` fill with a `--line` border — this is a deliberate exception to the no-rainbow rule, chosen for recognizability, sourced via Simple Icons (`cdn.simpleicons.org/<icon_key>`) keyed off `services.icon_key`, with an ink-colored initial as fallback when a logo fails to load. Every other icon in the product (status glyphs, nav icons, etc.) stays neutral/monochrome as before.
 
 ## Core screens
 1. **Landing page** — nav (logo, Log in, Create account) → hero ("Your code. Your number. Your stack.", subcopy, CTA, proof strip) → service catalog grid with category filter chips → 3-step process → country coverage grid → pricing/trust strip → footer.

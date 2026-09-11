@@ -7,8 +7,38 @@ export interface CatalogGridEntry {
   price: { priceKobo: number } | null;
 }
 
-function formatNaira(kobo: number) {
-  return (kobo / 100).toLocaleString("en-NG", { minimumFractionDigits: 2 });
+function formatNairaWhole(kobo: number) {
+  return Math.round(kobo / 100).toLocaleString("en-NG");
+}
+
+// Real brand logos via Simple Icons' free CDN (cdn.simpleicons.org/<slug>),
+// keyed off services.icon_key — full brand color by default, per the
+// landing-page redesign (see DESIGN.md's updated "Icon tiles" note). Falls
+// back to the original ink-initial tile if a slug has no matching icon or
+// the request fails, so a bad icon_key never breaks the grid.
+function ServiceLogo({ name, iconKey }: { name: string; iconKey: string }) {
+  const [failed, setFailed] = useState(false);
+
+  if (failed || !iconKey) {
+    return (
+      <div className="flex h-12 w-12 items-center justify-center rounded-[10px] border border-line bg-paper font-display text-lg font-bold text-ink">
+        {name.charAt(0)}
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex h-12 w-12 items-center justify-center rounded-[10px] border border-line bg-paper p-2">
+      {/* eslint-disable-next-line @next/next/no-img-element -- external brand icon, not a Next/Image asset */}
+      <img
+        src={`https://cdn.simpleicons.org/${iconKey}`}
+        alt={`${name} logo`}
+        className="h-full w-full object-contain"
+        loading="lazy"
+        onError={() => setFailed(true)}
+      />
+    </div>
+  );
 }
 
 // onBuy is optional: the landing page (public, unauthenticated) renders
@@ -58,12 +88,10 @@ export function ServiceCatalogGrid({
               key={service.id}
               className="flex flex-col items-center gap-2 rounded-[14px] border border-line bg-paper-raised p-4 text-center"
             >
-              <div className="flex h-12 w-12 items-center justify-center rounded-[10px] border border-line bg-paper font-display text-lg font-bold text-ink">
-                {service.name.charAt(0)}
-              </div>
+              <ServiceLogo name={service.name} iconKey={service.iconKey} />
               <p className="text-sm font-medium text-text">{service.name}</p>
               <p className="font-technical text-sm text-signal">
-                {price ? `₦${formatNaira(price.priceKobo)}` : "—"}
+                {price ? `Get ${service.name} from ₦${formatNairaWhole(price.priceKobo)}` : "—"}
               </p>
               {onBuy && (
                 <button

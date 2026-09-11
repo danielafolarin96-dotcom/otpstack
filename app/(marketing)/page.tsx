@@ -40,7 +40,8 @@ export default async function Home() {
             Your code. Your number. Your stack.
           </h1>
           <p className="max-w-md font-body text-text-dim">
-            Temporary phone numbers for OTP verification, priced in naira, ready in seconds.
+            Need a number? We&apos;ve got you covered. Choose a country, select your service, and
+            receive your verification code without the hassle.
           </p>
         </div>
 
