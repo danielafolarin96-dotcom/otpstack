@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { requireAdmin } from "@/lib/auth/require-admin";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { recordAdminAction } from "@/lib/audit/log";
 import { isPricingTierArray } from "@/lib/pricing/calculate";
 import type { Json } from "@/types/database";
 
@@ -25,7 +26,7 @@ export async function createPricingRule(
   formData: FormData,
 ): Promise<ActionState> {
   try {
-    await requireAdmin();
+    const adminUser = await requireAdmin();
 
     const rawScope = String(formData.get("scope"));
     const rawMarkupType = String(formData.get("markup_type"));
@@ -80,17 +81,37 @@ export async function createPricingRule(
     }
 
     const admin = createAdminClient();
-    const { error } = await admin.from("pricing_rules").insert({
-      scope,
-      service_id: serviceId,
-      country_id: countryId,
-      markup_type: markupType,
-      markup_value: markupValue,
-      min_margin_pct: minMarginPct,
-      priority: PRIORITY_BY_SCOPE[scope],
-    });
+    const { data: rule, error } = await admin
+      .from("pricing_rules")
+      .insert({
+        scope,
+        service_id: serviceId,
+        country_id: countryId,
+        markup_type: markupType,
+        markup_value: markupValue,
+        min_margin_pct: minMarginPct,
+        priority: PRIORITY_BY_SCOPE[scope],
+      })
+      .select()
+      .single();
 
     if (error) return { error: error.message };
+
+    await recordAdminAction(admin, {
+      adminId: adminUser.id,
+      action: "pricing_rule.create",
+      targetType: "pricing_rule",
+      targetId: rule.id,
+      metadata: {
+        scope,
+        service_id: serviceId,
+        country_id: countryId,
+        markup_type: markupType,
+        markup_value: markupValue,
+        min_margin_pct: minMarginPct,
+        priority: PRIORITY_BY_SCOPE[scope],
+      },
+    });
 
     revalidatePath("/admin/pricing");
     return {};
@@ -100,14 +121,37 @@ export async function createPricingRule(
 }
 
 export async function deletePricingRule(formData: FormData): Promise<void> {
-  await requireAdmin();
+  const adminUser = await requireAdmin();
 
   const id = String(formData.get("id"));
   if (!id) throw new Error("Missing rule id");
 
   const admin = createAdminClient();
-  const { error } = await admin.from("pricing_rules").delete().eq("id", id);
+  const { data: deleted, error } = await admin
+    .from("pricing_rules")
+    .delete()
+    .eq("id", id)
+    .select()
+    .maybeSingle();
   if (error) throw error;
+
+  if (deleted) {
+    await recordAdminAction(admin, {
+      adminId: adminUser.id,
+      action: "pricing_rule.delete",
+      targetType: "pricing_rule",
+      targetId: id,
+      metadata: {
+        scope: deleted.scope,
+        service_id: deleted.service_id,
+        country_id: deleted.country_id,
+        markup_type: deleted.markup_type,
+        markup_value: deleted.markup_value,
+        min_margin_pct: deleted.min_margin_pct,
+        priority: deleted.priority,
+      },
+    });
+  }
 
   revalidatePath("/admin/pricing");
 }
