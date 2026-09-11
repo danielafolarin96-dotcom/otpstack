@@ -51,7 +51,10 @@ const FIVESIM_ORDER = {
   country: "nigeria",
 };
 
-function fakeAdminClient(configs: Record<string, { data: unknown; error: unknown }>) {
+function fakeAdminClient(
+  configs: Record<string, { data: unknown; error: unknown }>,
+  rpcResult: { data: unknown; error: unknown },
+) {
   const from = vi.fn((table: string) => {
     const result = configs[table] ?? { data: null, error: null };
     const builder: {
@@ -59,8 +62,6 @@ function fakeAdminClient(configs: Record<string, { data: unknown; error: unknown
       eq: () => typeof builder;
       order: () => typeof builder;
       limit: () => typeof builder;
-      insert: () => typeof builder;
-      delete: () => typeof builder;
       maybeSingle: () => Promise<unknown>;
       single: () => Promise<unknown>;
       then: (resolve: (v: unknown) => void) => void;
@@ -69,15 +70,14 @@ function fakeAdminClient(configs: Record<string, { data: unknown; error: unknown
       eq: () => builder,
       order: () => builder,
       limit: () => builder,
-      insert: () => builder,
-      delete: () => builder,
       maybeSingle: () => Promise.resolve(result),
       single: () => Promise.resolve(result),
       then: (resolve) => resolve(result),
     };
     return builder;
   });
-  return { from } as unknown as SupabaseClient<Database>;
+  const rpc = vi.fn(() => Promise.resolve(rpcResult));
+  return { from, rpc } as unknown as SupabaseClient<Database>;
 }
 
 const baseConfigs = (): Record<string, { data: unknown; error: unknown }> => ({
@@ -86,15 +86,15 @@ const baseConfigs = (): Record<string, { data: unknown; error: unknown }> => ({
   pricing_rules: { data: [GLOBAL_RULE], error: null },
   fx_rates: { data: { rate: 1600 }, error: null },
   wallets: { data: { balance_kobo: 1_000_000 }, error: null },
-  orders: {
-    data: {
-      id: "order-1",
-      phone_number: FIVESIM_ORDER.phone,
-      expires_at: new Date().toISOString(),
-    },
-    error: null,
+});
+
+const baseRpcResult = () => ({
+  data: {
+    id: "order-1",
+    phone_number: FIVESIM_ORDER.phone,
+    expires_at: new Date().toISOString(),
   },
-  wallet_transactions: { data: null, error: null },
+  error: null,
 });
 
 beforeEach(() => {
@@ -107,8 +107,8 @@ beforeEach(() => {
 });
 
 describe("purchaseNumber", () => {
-  it("buys from 5sim, debits the wallet, and creates the order on the happy path", async () => {
-    const client = fakeAdminClient(baseConfigs());
+  it("buys from 5sim, then atomically creates the order and debits the wallet via RPC", async () => {
+    const client = fakeAdminClient(baseConfigs(), baseRpcResult());
 
     const result = await purchaseNumber(client, {
       userId: "user-1",
@@ -119,13 +119,23 @@ describe("purchaseNumber", () => {
     expect(result.order.id).toBe("order-1");
     expect(result.order.phoneNumber).toBe(FIVESIM_ORDER.phone);
     expect(buyActivation).toHaveBeenCalledWith("nigeria", "whatsapp");
+    expect(client.rpc).toHaveBeenCalledWith(
+      "create_order_and_debit_wallet",
+      expect.objectContaining({
+        p_user_id: "user-1",
+        p_service_id: SERVICE.id,
+        p_country_code: "nigeria",
+        p_fivesim_order_id: String(FIVESIM_ORDER.id),
+        p_phone_number: FIVESIM_ORDER.phone,
+      }),
+    );
     expect(cancelOrder).not.toHaveBeenCalled();
   });
 
   it("rejects with 404 when the service doesn't exist or is inactive", async () => {
     const configs = baseConfigs();
     configs.services = { data: null, error: null };
-    const client = fakeAdminClient(configs);
+    const client = fakeAdminClient(configs, baseRpcResult());
 
     await expect(
       purchaseNumber(client, { userId: "user-1", serviceId: "x", countryId: COUNTRY.id }),
@@ -135,7 +145,7 @@ describe("purchaseNumber", () => {
 
   it("rejects with 409 when 5sim doesn't offer this product in this country", async () => {
     vi.mocked(getProductPrices).mockResolvedValue({}); // whatsapp missing
-    const client = fakeAdminClient(baseConfigs());
+    const client = fakeAdminClient(baseConfigs(), baseRpcResult());
 
     await expect(
       purchaseNumber(client, { userId: "user-1", serviceId: SERVICE.id, countryId: COUNTRY.id }),
@@ -146,7 +156,7 @@ describe("purchaseNumber", () => {
   it("rejects with 402 when the wallet balance is insufficient, before ever calling 5sim", async () => {
     const configs = baseConfigs();
     configs.wallets = { data: { balance_kobo: 0 }, error: null };
-    const client = fakeAdminClient(configs);
+    const client = fakeAdminClient(configs, baseRpcResult());
 
     await expect(
       purchaseNumber(client, { userId: "user-1", serviceId: SERVICE.id, countryId: COUNTRY.id }),
@@ -156,32 +166,20 @@ describe("purchaseNumber", () => {
 
   it("rejects with 502 and touches nothing else when the 5sim buy call itself fails", async () => {
     vi.mocked(buyActivation).mockRejectedValue(new Error("5sim: out of stock"));
-    const client = fakeAdminClient(baseConfigs());
+    const client = fakeAdminClient(baseConfigs(), baseRpcResult());
 
     await expect(
       purchaseNumber(client, { userId: "user-1", serviceId: SERVICE.id, countryId: COUNTRY.id }),
     ).rejects.toMatchObject({ status: 502 });
+    expect(client.rpc).not.toHaveBeenCalled();
     expect(cancelOrder).not.toHaveBeenCalled();
   });
 
-  it("cancels the upstream order if recording the local order row fails", async () => {
-    const configs = baseConfigs();
-    configs.orders = { data: null, error: { message: "insert failed" } };
-    const client = fakeAdminClient(configs);
-
-    await expect(
-      purchaseNumber(client, { userId: "user-1", serviceId: SERVICE.id, countryId: COUNTRY.id }),
-    ).rejects.toMatchObject({ status: 500 });
-    expect(cancelOrder).toHaveBeenCalledWith(String(FIVESIM_ORDER.id));
-  });
-
-  it("cancels upstream and reports insufficient balance if the ledger debit loses a balance race", async () => {
-    const configs = baseConfigs();
-    configs.wallet_transactions = {
+  it("cancels upstream and reports insufficient balance when the RPC's atomic debit loses a balance race", async () => {
+    const client = fakeAdminClient(baseConfigs(), {
       data: null,
       error: { message: "sync_wallet_balance: balance would go negative for user_id x", code: "P0001" },
-    };
-    const client = fakeAdminClient(configs);
+    });
 
     await expect(
       purchaseNumber(client, { userId: "user-1", serviceId: SERVICE.id, countryId: COUNTRY.id }),
@@ -189,14 +187,15 @@ describe("purchaseNumber", () => {
     expect(cancelOrder).toHaveBeenCalledWith(String(FIVESIM_ORDER.id));
   });
 
-  it("still cancels upstream on a non-balance ledger failure, with a generic error", async () => {
-    const configs = baseConfigs();
-    configs.wallet_transactions = { data: null, error: { message: "connection reset", code: "08000" } };
-    const client = fakeAdminClient(configs);
+  it("still cancels upstream on a non-balance RPC failure, with a generic reversal error — no orphaned order to compensate for since the transaction already rolled it back", async () => {
+    const client = fakeAdminClient(baseConfigs(), {
+      data: null,
+      error: { message: "connection reset", code: "08000" },
+    });
 
     await expect(
       purchaseNumber(client, { userId: "user-1", serviceId: SERVICE.id, countryId: COUNTRY.id }),
-    ).rejects.toMatchObject({ status: 402, message: "Failed to debit wallet — purchase was reversed" });
+    ).rejects.toMatchObject({ status: 500, message: "Failed to record the purchase — it was reversed" });
     expect(cancelOrder).toHaveBeenCalledWith(String(FIVESIM_ORDER.id));
   });
 });

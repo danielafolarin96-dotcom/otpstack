@@ -2,7 +2,6 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/types/database";
 import { buyActivation, cancelOrder, getProductPrices } from "@/lib/5sim/client";
-import { recordWalletTransaction } from "@/lib/wallet/ledger";
 import { fetchAllPricingRules, fetchLatestFxRate, priceFromRulesAndRate } from "@/lib/pricing/engine";
 
 const ORDER_TTL_MINUTES = 10;
@@ -101,49 +100,32 @@ export async function purchaseNumber(
   const upstreamCostKobo = Math.round(fivesimOrder.price * fxRate * 100);
   const expiresAt = new Date(Date.now() + ORDER_TTL_MINUTES * 60_000).toISOString();
 
-  const { data: order, error: orderError } = await admin
-    .from("orders")
-    .insert({
-      user_id: params.userId,
-      service_id: service.id,
-      country_code: country.fivesim_country_code,
-      fivesim_order_id: String(fivesimOrder.id),
-      phone_number: fivesimOrder.phone,
-      status: "pending",
-      price_kobo: resolved.priceKobo,
-      upstream_cost_kobo: upstreamCostKobo,
-      expires_at: expiresAt,
-    })
-    .select()
-    .single();
+  // Order creation and the wallet debit happen as one Postgres transaction
+  // (see the create_order_and_debit_wallet migration) — if the debit fails
+  // for any reason (most likely the negative-balance guard catching a race
+  // lost against another concurrent purchase), the order insert rolls back
+  // automatically with it. Nothing left to compensate-delete on our side;
+  // only the upstream 5sim purchase can still need cancelling.
+  const { data: order, error: rpcError } = await admin.rpc("create_order_and_debit_wallet", {
+    p_user_id: params.userId,
+    p_service_id: service.id,
+    p_country_code: country.fivesim_country_code,
+    p_fivesim_order_id: String(fivesimOrder.id),
+    p_phone_number: fivesimOrder.phone,
+    p_price_kobo: resolved.priceKobo,
+    p_upstream_cost_kobo: upstreamCostKobo,
+    p_expires_at: expiresAt,
+    p_metadata: { fivesim_order_id: fivesimOrder.id, service: service.name, country: country.name },
+  });
 
-  if (orderError || !order) {
+  if (rpcError || !order) {
     await safeCancelUpstream(fivesimOrder.id);
+    const message = errorMessage(rpcError);
     throw new PurchaseError(
-      "Failed to record the order — the 5sim number was not charged to your wallet",
-      500,
-    );
-  }
-
-  try {
-    await recordWalletTransaction(admin, {
-      userId: params.userId,
-      type: "purchase",
-      amountKobo: -resolved.priceKobo,
-      reference: `purchase_${order.id}`,
-      orderId: order.id,
-      metadata: { fivesim_order_id: fivesimOrder.id, service: service.name, country: country.name },
-    });
-  } catch (err) {
-    // Debit failed — most likely the negative-balance guard catching a
-    // race lost against another concurrent purchase. Compensate on both
-    // sides rather than leaving an unpaid order in the table.
-    await safeCancelUpstream(fivesimOrder.id);
-    await admin.from("orders").delete().eq("id", order.id);
-    const message = errorMessage(err);
-    throw new PurchaseError(
-      message.includes("negative") ? "Insufficient wallet balance" : "Failed to debit wallet — purchase was reversed",
-      402,
+      message.includes("negative")
+        ? "Insufficient wallet balance"
+        : "Failed to record the purchase — it was reversed",
+      message.includes("negative") ? 402 : 500,
     );
   }
 
