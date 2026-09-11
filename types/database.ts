@@ -39,6 +39,132 @@ export type Database = {
   }
   public: {
     Tables: {
+      countries: {
+        Row: {
+          fivesim_country_code: string
+          flag_emoji: string
+          id: string
+          is_active: boolean
+          name: string
+        }
+        Insert: {
+          fivesim_country_code: string
+          flag_emoji: string
+          id?: string
+          is_active?: boolean
+          name: string
+        }
+        Update: {
+          fivesim_country_code?: string
+          flag_emoji?: string
+          id?: string
+          is_active?: boolean
+          name?: string
+        }
+        Relationships: []
+      }
+      fx_rates: {
+        Row: {
+          fetched_at: string
+          id: string
+          pair: string
+          rate: number
+          source: string
+        }
+        Insert: {
+          fetched_at?: string
+          id?: string
+          pair: string
+          rate: number
+          source: string
+        }
+        Update: {
+          fetched_at?: string
+          id?: string
+          pair?: string
+          rate?: number
+          source?: string
+        }
+        Relationships: []
+      }
+      pricing_rules: {
+        Row: {
+          country_id: string | null
+          id: string
+          markup_type: Database["public"]["Enums"]["pricing_markup_type"]
+          markup_value: Json
+          min_margin_pct: number
+          priority: number
+          scope: Database["public"]["Enums"]["pricing_rule_scope"]
+          service_id: string | null
+          updated_at: string
+        }
+        Insert: {
+          country_id?: string | null
+          id?: string
+          markup_type: Database["public"]["Enums"]["pricing_markup_type"]
+          markup_value: Json
+          min_margin_pct?: number
+          priority: number
+          scope: Database["public"]["Enums"]["pricing_rule_scope"]
+          service_id?: string | null
+          updated_at?: string
+        }
+        Update: {
+          country_id?: string | null
+          id?: string
+          markup_type?: Database["public"]["Enums"]["pricing_markup_type"]
+          markup_value?: Json
+          min_margin_pct?: number
+          priority?: number
+          scope?: Database["public"]["Enums"]["pricing_rule_scope"]
+          service_id?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "pricing_rules_country_id_fkey"
+            columns: ["country_id"]
+            isOneToOne: false
+            referencedRelation: "countries"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "pricing_rules_service_id_fkey"
+            columns: ["service_id"]
+            isOneToOne: false
+            referencedRelation: "services"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      services: {
+        Row: {
+          category: string
+          fivesim_product_code: string
+          icon_key: string
+          id: string
+          is_active: boolean
+          name: string
+        }
+        Insert: {
+          category: string
+          fivesim_product_code: string
+          icon_key?: string
+          id?: string
+          is_active?: boolean
+          name: string
+        }
+        Update: {
+          category?: string
+          fivesim_product_code?: string
+          icon_key?: string
+          id?: string
+          is_active?: boolean
+          name?: string
+        }
+        Relationships: []
+      }
       users: {
         Row: {
           created_at: string
@@ -144,6 +270,8 @@ export type Database = {
       [_ in never]: never
     }
     Enums: {
+      pricing_markup_type: "percent" | "flat_kobo" | "tiered"
+      pricing_rule_scope: "global" | "service" | "country" | "service_country"
       wallet_transaction_type:
         | "topup"
         | "purchase"
@@ -279,6 +407,8 @@ export const Constants = {
   },
   public: {
     Enums: {
+      pricing_markup_type: ["percent", "flat_kobo", "tiered"],
+      pricing_rule_scope: ["global", "service", "country", "service_country"],
       wallet_transaction_type: [
         "topup",
         "purchase",
