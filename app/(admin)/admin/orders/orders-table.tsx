@@ -1,3 +1,7 @@
+import { RefundButton } from "./refund-button";
+
+const REFUNDABLE_STATUSES = new Set(["pending", "sms_received"]);
+
 type AdminOrderRow = {
   id: string;
   phone_number: string;
@@ -39,6 +43,7 @@ export function AdminOrdersTable({ orders }: { orders: AdminOrderRow[] }) {
             <th className="px-4 py-3 font-medium">Status</th>
             <th className="px-4 py-3 font-medium">Price</th>
             <th className="px-4 py-3 font-medium">Date</th>
+            <th className="px-4 py-3 font-medium">Action</th>
           </tr>
         </thead>
         <tbody>
@@ -71,6 +76,9 @@ export function AdminOrdersTable({ orders }: { orders: AdminOrderRow[] }) {
                     month: "short",
                     year: "numeric",
                   })}
+                </td>
+                <td className="px-4 py-3">
+                  {REFUNDABLE_STATUSES.has(order.status) && <RefundButton orderId={order.id} />}
                 </td>
               </tr>
             );
