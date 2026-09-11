@@ -2,6 +2,7 @@ import Link from "next/link";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { computeCatalogPrices, fetchActiveCountries } from "@/lib/pricing/catalog";
 import { ServiceCatalogGrid } from "@/components/catalog/service-catalog-grid";
+import { SiteFooter } from "@/components/site-footer";
 
 // Prices come from pricing_rules via the engine — without this, Next would
 // prerender the catalog once at build time and serve stale prices until
@@ -54,6 +55,8 @@ export default async function Home() {
           )}
         </section>
       </main>
+
+      <SiteFooter />
     </>
   );
 }

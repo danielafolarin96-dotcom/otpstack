@@ -164,8 +164,12 @@ export function SignupForm() {
           I agree to the{" "}
           <Link href="/terms" className="font-medium text-signal hover:text-signal-bright">
             Terms of Service
-          </Link>{" "}
-          and{" "}
+          </Link>
+          ,{" "}
+          <Link href="/acceptable-use" className="font-medium text-signal hover:text-signal-bright">
+            Acceptable Use Policy
+          </Link>
+          , and{" "}
           <Link href="/privacy" className="font-medium text-signal hover:text-signal-bright">
             Privacy Policy
           </Link>
