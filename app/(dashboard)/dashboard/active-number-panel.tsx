@@ -35,6 +35,22 @@ export function ActiveNumberPanel({ order: initialOrder }: { order: ActiveOrder 
     return () => clearInterval(tick);
   }, []);
 
+  // Audit fix: this used to also depend on `now`, which the countdown
+  // effect above bumps every 1000ms — since that's shorter than
+  // POLL_INTERVAL_MS (4000ms), the timeout got cleared and rescheduled
+  // every second, before it could ever actually fire. The poll request was
+  // never sent. `now` isn't referenced in this effect's body at all; it
+  // was never needed here.
+  //
+  // Removing it isn't sufficient on its own, though: the effect only
+  // reschedules the next poll when it re-runs, which happens when `order`
+  // changes identity. The original callback only called setOrder when the
+  // polled status actually differed — so once a single poll found "no
+  // change" (the common case, while waiting for an SMS), `order` would
+  // stop changing and polling would silently stop after that one attempt.
+  // Calling setOrder on every completed poll (not just on a status change)
+  // keeps `order`'s identity changing each cycle, which is what drives the
+  // effect to reschedule the next poll 4s later.
   useEffect(() => {
     if (!order || order.status !== "pending") return;
 
@@ -43,12 +59,10 @@ export function ActiveNumberPanel({ order: initialOrder }: { order: ActiveOrder 
         const response = await fetch(`/api/orders/${order.id}/status`);
         if (!response.ok) return;
         const json = await response.json();
-        if (json.order.status !== order.status) {
-          if (json.order.status !== "pending") {
-            router.refresh(); // wallet balance / recent activity may have changed
-          }
-          setOrder({ ...order, ...json.order });
+        if (json.order.status !== order.status && json.order.status !== "pending") {
+          router.refresh(); // wallet balance / recent activity may have changed
         }
+        setOrder((prev) => (prev ? { ...prev, ...json.order } : prev));
       } catch {
         // Network hiccup — next tick will retry.
       }
@@ -57,7 +71,7 @@ export function ActiveNumberPanel({ order: initialOrder }: { order: ActiveOrder 
     return () => {
       if (pollTimer.current) clearTimeout(pollTimer.current);
     };
-  }, [order, now, router]);
+  }, [order, router]);
 
   async function handleCancel() {
     if (!order) return;
