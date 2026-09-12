@@ -4,6 +4,13 @@ import * as simpleIcons from "simple-icons";
 export interface BrandIcon {
   path: string;
   hex: string;
+  // True for a handful of brands (Supercell, Sony, Unity, ... 37 of the
+  // package's 3,459 icons as of this writing) whose hex is at or near pure
+  // white — invisible on the fixed-white --icon-surface tile background
+  // (see components/catalog/service-catalog-grid.tsx), the same way dark
+  // logos used to go invisible on the old theme-following --paper. Callers
+  // use a fixed-dark tile instead for these.
+  isNearWhite: boolean;
 }
 
 interface SimpleIconLike {
@@ -22,6 +29,19 @@ function isSimpleIcon(value: unknown): value is SimpleIconLike {
   );
 }
 
+// Relative luminance (WCAG-style, sRGB without the linearization curve —
+// plenty precise for a binary "is this basically white" check, not a
+// contrast-ratio calculation). Confirmed against real data: Snapchat's
+// #FFFC00 (0.919) still reads fine on white, so the threshold below is set
+// past that rather than at a round number.
+function luminance(hex: string): number {
+  const r = parseInt(hex.slice(0, 2), 16) / 255;
+  const g = parseInt(hex.slice(2, 4), 16) / 255;
+  const b = parseInt(hex.slice(4, 6), 16) / 255;
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+const NEAR_WHITE_THRESHOLD = 0.94;
+
 // simple-icons' named exports are keyed by "si<PascalTitle>" (e.g.
 // siWhatsapp), not by the slug we actually store (services.icon_key) —
 // build a slug -> icon map once, at module load, so lookups are O(1).
@@ -33,7 +53,10 @@ function isSimpleIcon(value: unknown): value is SimpleIconLike {
 const iconsBySlug = new Map<string, BrandIcon>(
   Object.values(simpleIcons)
     .filter(isSimpleIcon)
-    .map((icon) => [icon.slug, { path: icon.path, hex: icon.hex }]),
+    .map((icon) => [
+      icon.slug,
+      { path: icon.path, hex: icon.hex, isNearWhite: luminance(icon.hex) > NEAR_WHITE_THRESHOLD },
+    ]),
 );
 
 // Returns null if icon_key doesn't match any current Simple Icons slug —

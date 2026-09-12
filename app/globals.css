@@ -24,6 +24,12 @@
      --paper. Only real brand-logo tiles use this; the ink-initial fallback
      tile keeps using --paper, since plain text safely follows the theme. */
   --icon-surface: #ffffff;
+  /* Fixed dark in both themes — the inverse case: a handful of brands
+     (Supercell, Sony, Unity, ...) ship a pure-or-near-white hex, which
+     would go invisible on --icon-surface the same way dark logos went
+     invisible on dark-mode --paper. See lib/icons/lookup.ts's
+     isNearWhite. */
+  --icon-surface-inverse: #1a1712;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -56,6 +62,7 @@
   --color-danger: var(--danger);
   --color-good: var(--good);
   --color-icon-surface: var(--icon-surface);
+  --color-icon-surface-inverse: var(--icon-surface-inverse);
 
   --font-display: var(--font-sora);
   --font-body: var(--font-manrope);

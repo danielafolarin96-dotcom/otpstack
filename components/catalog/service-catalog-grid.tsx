@@ -10,6 +10,7 @@ export interface CatalogGridEntry {
     iconKey: string;
     iconPath: string | null;
     iconHex: string | null;
+    iconIsNearWhite: boolean;
   };
   price: { priceKobo: number } | null;
 }
@@ -27,7 +28,17 @@ function formatNairaWhole(kobo: number) {
 // Simple Icons match — not every brand has one (verified: Amazon,
 // Microsoft, and LinkedIn currently don't), so this is an expected,
 // regular code path, not an error case.
-function ServiceLogo({ name, iconPath, iconHex }: { name: string; iconPath: string | null; iconHex: string | null }) {
+function ServiceLogo({
+  name,
+  iconPath,
+  iconHex,
+  iconIsNearWhite,
+}: {
+  name: string;
+  iconPath: string | null;
+  iconHex: string | null;
+  iconIsNearWhite: boolean;
+}) {
   if (!iconPath || !iconHex) {
     return (
       <div className="flex h-12 w-12 items-center justify-center rounded-[10px] border border-line bg-paper font-display text-lg font-bold text-ink">
@@ -36,12 +47,19 @@ function ServiceLogo({ name, iconPath, iconHex }: { name: string; iconPath: stri
     );
   }
 
-  // Fixed white in both themes, not the theme-following --paper: a brand's
-  // hex color is designed against a light backdrop, so some (e.g.
-  // TradingView's near-black mark) would otherwise go invisible in dark
-  // mode — see the --icon-surface token in globals.css.
+  // Fixed white (or, for a near-white brand color like Supercell's, fixed
+  // dark) in both themes, not the theme-following --paper: a brand's hex
+  // color is designed against a light backdrop, so a dark logo (e.g.
+  // TradingView) would otherwise go invisible in dark mode, and a
+  // near-white one would go invisible against the white fix for that —
+  // see lib/icons/lookup.ts's isNearWhite and globals.css's
+  // --icon-surface(-inverse).
   return (
-    <div className="flex h-12 w-12 items-center justify-center rounded-[10px] border border-line bg-icon-surface p-2">
+    <div
+      className={`flex h-12 w-12 items-center justify-center rounded-[10px] border border-line p-2 ${
+        iconIsNearWhite ? "bg-icon-surface-inverse" : "bg-icon-surface"
+      }`}
+    >
       <svg viewBox="0 0 24 24" role="img" aria-label={`${name} logo`} className="h-full w-full">
         <path d={iconPath} fill={`#${iconHex}`} />
       </svg>
@@ -140,7 +158,12 @@ export function ServiceCatalogGrid({
                 key={service.id}
                 className="flex flex-col items-center gap-2 rounded-[14px] border border-line bg-paper-raised p-4 text-center"
               >
-                <ServiceLogo name={service.name} iconPath={service.iconPath} iconHex={service.iconHex} />
+                <ServiceLogo
+                  name={service.name}
+                  iconPath={service.iconPath}
+                  iconHex={service.iconHex}
+                  iconIsNearWhite={service.iconIsNearWhite}
+                />
                 <p className="text-sm font-medium text-text">{service.name}</p>
                 <p className="font-technical text-sm text-signal">
                   Get {service.name} from ₦{formatNairaWhole(price.priceKobo)}

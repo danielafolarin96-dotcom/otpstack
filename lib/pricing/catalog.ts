@@ -12,6 +12,7 @@ export interface CatalogService {
   iconKey: string;
   iconPath: string | null;
   iconHex: string | null;
+  iconIsNearWhite: boolean;
 }
 
 export interface CatalogEntry {
@@ -79,6 +80,7 @@ export async function computeCatalogPrices(
       iconKey: row.icon_key,
       iconPath: brandIcon?.path ?? null,
       iconHex: brandIcon?.hex ?? null,
+      iconIsNearWhite: brandIcon?.isNearWhite ?? false,
     };
 
     const upstreamProduct = productPrices[row.fivesim_product_code];
