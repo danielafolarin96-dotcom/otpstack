@@ -47,7 +47,7 @@ export default async function Home() {
         </div>
 
         <section className="w-full max-w-[1080px]">
-          <h2 className="mb-6 font-display text-2xl font-bold text-ink">Popular services</h2>
+          <h2 className="mb-6 font-display text-2xl font-bold text-ink">Browse services</h2>
           {entries.length > 0 ? (
             <ServiceCatalogGrid entries={entries} countryName={nigeria?.name ?? ""} />
           ) : (

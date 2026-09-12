@@ -116,33 +116,46 @@ export function ServiceCatalogGrid({
         ))}
       </div>
 
-      <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4">
-        {filtered.map(({ service, price }) => {
-          const isBuying = buyingServiceId === service.id;
-          return (
-            <div
-              key={service.id}
-              className="flex flex-col items-center gap-2 rounded-[14px] border border-line bg-paper-raised p-4 text-center"
-            >
-              <ServiceLogo name={service.name} iconPath={service.iconPath} iconHex={service.iconHex} />
-              <p className="text-sm font-medium text-text">{service.name}</p>
-              <p className="font-technical text-sm text-signal">
-                Get {service.name} from ₦{formatNairaWhole(price.priceKobo)}
-              </p>
-              {onBuy && (
-                <button
-                  type="button"
-                  disabled={Boolean(buyingServiceId)}
-                  onClick={() => onBuy(service.id)}
-                  className="mt-1 w-full rounded-[10px] bg-signal px-3 py-1.5 text-xs font-semibold text-paper transition-colors hover:bg-signal-bright disabled:opacity-50"
-                >
-                  {isBuying ? "Buying…" : "Buy"}
-                </button>
-              )}
-            </div>
-          );
-        })}
-      </div>
+      {filtered.length === 0 ? (
+        <div className="flex min-h-[200px] flex-col items-center justify-center gap-2 rounded-[14px] border border-dashed border-line bg-paper-raised px-6 text-center">
+          <p className="font-display text-base font-semibold text-ink">
+            {available.length === 0 ? "No services available here yet" : "No matches"}
+          </p>
+          <p className="max-w-sm text-sm text-text-dim">
+            {available.length === 0
+              ? "This country doesn't have any services in stock right now — try another one."
+              : "Try a different search term or category."}
+          </p>
+        </div>
+      ) : (
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4">
+          {filtered.map(({ service, price }) => {
+            const isBuying = buyingServiceId === service.id;
+            return (
+              <div
+                key={service.id}
+                className="flex flex-col items-center gap-2 rounded-[14px] border border-line bg-paper-raised p-4 text-center"
+              >
+                <ServiceLogo name={service.name} iconPath={service.iconPath} iconHex={service.iconHex} />
+                <p className="text-sm font-medium text-text">{service.name}</p>
+                <p className="font-technical text-sm text-signal">
+                  Get {service.name} from ₦{formatNairaWhole(price.priceKobo)}
+                </p>
+                {onBuy && (
+                  <button
+                    type="button"
+                    disabled={Boolean(buyingServiceId)}
+                    onClick={() => onBuy(service.id)}
+                    className="mt-1 w-full rounded-[10px] bg-signal px-3 py-1.5 text-xs font-semibold text-paper transition-colors hover:bg-signal-bright disabled:opacity-50"
+                  >
+                    {isBuying ? "Buying…" : "Buy"}
+                  </button>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

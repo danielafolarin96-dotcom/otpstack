@@ -3,6 +3,9 @@
 ## Direction
 Warm, calm, professional — not a loud "crypto/tech demo" look. Cream ground, single orange accent used sparingly (primary actions, emphasis, active states only). Neutral, monochrome iconography everywhere except service/platform logos (see "Icon tiles" below) — no rainbow colors used decoratively.
 
+## Copy voice
+Plain, like a person describing the product to another person — not marketing copy. No "unlock," "elevate," "seamless," "in today's world," or similar filler; no rule-of-three lists for their own sake; no sentence that just restates the heading above it. If a heading makes a claim ("Popular services"), it has to stay true as the underlying data changes — prefer a plain, durable label ("Browse services") over one that can go stale.
+
 ## Color tokens
 
 ### Light
