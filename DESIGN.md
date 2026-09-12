@@ -28,9 +28,10 @@ Plain, like a person describing the product to another person — not marketing 
 - `--good`: #35C98A, `--danger`: #E9715A
 
 ## Typography
-- Display/headings: **Sora** (600–800) — h1/h2/h3, nav brand
-- Body: **Manrope** (400–700) — running text, buttons, labels
-- Numerals/technical: **Space Mono** — OTP codes, phone numbers, prices, countdown timers, ledger figures (tabular-nums). Deliberate choice: OTP codes and phone numbers are literally monospaced data, so the type system reflects that.
+- One sans-serif family, not two: **Geist Sans** (Vercel's own font, via the `geist` npm package and `next/font`) for both roles, distinguished by weight rather than by family.
+  - Display/headings: Geist Sans, **extrabold (800)**, tight letter-spacing (`tracking-tight`) — h1/h2/h3, nav brand. Matches OTPBox's actual rendered heading CSS (`font-extrabold tracking-tight`, near-black `#1A1A1A` — see `--ink`).
+  - Body: Geist Sans, regular–bold (400–700) — running text, buttons, labels.
+- Numerals/technical: **Geist Mono** (same `geist` package) — OTP codes, phone numbers, prices, countdown timers, ledger figures (tabular-nums). Deliberate choice: OTP codes and phone numbers are literally monospaced data, so the type system reflects that.
 
 ## Layout rules
 - Max content width 1080px; minimum 20px side gutter at every width.

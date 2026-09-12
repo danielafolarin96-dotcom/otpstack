@@ -5,7 +5,11 @@
 :root {
   --paper: #fbf6ec;
   --paper-raised: #ffffff;
-  --ink: #1a1712;
+  /* Neutral near-black, not the warm #1a1712 this used to be — matches
+     OTPBox's actual rendered heading color exactly (see DESIGN.md's
+     Typography section). Dark mode's --ink below is unaffected (still
+     flips to near-white for contrast against dark --paper). */
+  --ink: #1a1a1a;
   --signal: #ff5a1f;
   --signal-bright: #ff7a45;
   --amber: #c97b12;
@@ -76,9 +80,13 @@
   --color-icon-surface-border: var(--icon-surface-border);
   --color-icon-surface-inverse-border: var(--icon-surface-inverse-border);
 
-  --font-display: var(--font-sora);
-  --font-body: var(--font-manrope);
-  --font-technical: var(--font-space-mono);
+  /* Geist Sans for both roles (see DESIGN.md's Typography section) —
+     headings and body are one family now, distinguished by weight, not
+     by which font they're set in. --font-technical still gets its own
+     family below. */
+  --font-display: var(--font-geist-sans);
+  --font-body: var(--font-geist-sans);
+  --font-technical: var(--font-geist-mono);
 }
 
 body {
@@ -87,8 +95,20 @@ body {
   font-family: var(--font-body), ui-sans-serif, system-ui, sans-serif;
 }
 
+/* Headings, plus anything else carrying the font-display utility class
+   (nav wordmarks, empty-state captions, icon-tile initials) — matching
+   OTPBox's actual rendered heading CSS (font-extrabold tracking-tight).
+   Deliberately unlayered (not inside any @layer): per the CSS Cascade
+   Layers spec, unlayered rules always beat @layer-wrapped ones regardless
+   of selector specificity or source order, so this overrides Tailwind's
+   layered font-bold/font-semibold utilities wherever they're still
+   present in a font-display element's className — those classes are
+   harmless leftovers, not bugs, and don't need touching file-by-file. */
 h1,
 h2,
-h3 {
+h3,
+.font-display {
   font-family: var(--font-display), ui-sans-serif, system-ui, sans-serif;
+  font-weight: 800;
+  letter-spacing: -0.025em;
 }
