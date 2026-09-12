@@ -69,23 +69,17 @@ function ServiceLogo({
 
 // onBuy is optional: the landing page (public, unauthenticated) renders
 // tiles read-only; the dashboard's "Get a number" page passes a handler to
-// make them purchasable. countryName is whichever single country the
-// passed-in entries were priced for (there's no per-entry country today —
-// entries are always scoped to one selected country) — the search box
-// matches it too, so e.g. typing a different country's name while
-// browsing Nigeria's catalog correctly empties the grid rather than
-// silently ignoring the query, which is the honest result until a country
-// switch happens via the separate country selector.
+// make them purchasable. Country selection is a separate concern handled
+// by CountrySelect (its own search, scoped to the country picker) — this
+// search is services/apps only.
 export function ServiceCatalogGrid({
   entries,
   onBuy,
   buyingServiceId,
-  countryName,
 }: {
   entries: CatalogGridEntry[];
   onBuy?: (serviceId: string) => void;
   buyingServiceId?: string | null;
-  countryName: string;
 }) {
   // Hidden for now rather than shown as a disabled/greyed tile — at the
   // full catalog scale (Stage 4: 722 services x 80 countries) most
@@ -103,12 +97,11 @@ export function ServiceCatalogGrid({
   const [query, setQuery] = useState("");
 
   const normalizedQuery = query.trim().toLowerCase();
-  const countryMatches = normalizedQuery !== "" && countryName.toLowerCase().includes(normalizedQuery);
 
   const filtered = available.filter((e) => {
     if (active !== "All" && e.service.category !== active) return false;
     if (normalizedQuery === "") return true;
-    return countryMatches || e.service.name.toLowerCase().includes(normalizedQuery);
+    return e.service.name.toLowerCase().includes(normalizedQuery);
   });
 
   return (
@@ -117,7 +110,7 @@ export function ServiceCatalogGrid({
         type="text"
         value={query}
         onChange={(e) => setQuery(e.target.value)}
-        placeholder="Search services or country…"
+        placeholder="Search services…"
         className="w-full rounded-[10px] border border-line bg-paper px-3.5 py-2.5 text-sm text-text placeholder:text-slate-dim focus:border-signal focus:outline-none focus:ring-1 focus:ring-signal sm:max-w-xs"
       />
 

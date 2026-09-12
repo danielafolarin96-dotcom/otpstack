@@ -12,8 +12,8 @@ export const dynamic = "force-dynamic";
 export default async function Home() {
   const admin = createAdminClient();
   const countries = await fetchActiveCountries(admin);
-  const nigeria = countries.find((c) => c.name === "Nigeria") ?? countries[0];
-  const entries = nigeria ? await computeCatalogPrices(admin, nigeria.id) : [];
+  const defaultCountry = countries.find((c) => c.name === "United States") ?? countries[0];
+  const entries = defaultCountry ? await computeCatalogPrices(admin, defaultCountry.id) : [];
 
   return (
     <>
@@ -49,7 +49,7 @@ export default async function Home() {
         <section className="w-full max-w-[1080px]">
           <h2 className="mb-6 font-display text-2xl font-bold text-ink">Browse services</h2>
           {entries.length > 0 ? (
-            <ServiceCatalogGrid entries={entries} countryName={nigeria?.name ?? ""} />
+            <ServiceCatalogGrid entries={entries} />
           ) : (
             <p className="text-sm text-text-dim">No services configured yet.</p>
           )}
