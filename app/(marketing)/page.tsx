@@ -97,9 +97,6 @@ export default async function Home() {
 
       <main className="flex flex-1 flex-col items-center gap-16 px-5 pb-16">
         <div className="flex flex-col items-center gap-4 pt-12 text-center">
-          <p className="font-technical text-xs font-bold uppercase tracking-[0.14em] text-slate">
-            Verification numbers, priced in naira
-          </p>
           <h1 className="font-display text-4xl font-bold text-ink">
             Your code. Your number. Your stack.
           </h1>

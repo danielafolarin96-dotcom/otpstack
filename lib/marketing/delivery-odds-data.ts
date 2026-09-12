@@ -13,14 +13,14 @@
  * ordered with US, Canada and UK first per product direction; the rest
  * follow in no particular priority.
  */
-export const DELIVERY_ODDS_SERVICES = ["whatsapp", "telegram", "google", "instagram"] as const;
+export const DELIVERY_ODDS_SERVICES = ["tiktok", "instagram", "snapchat", "discord"] as const;
 export type DeliveryOddsService = (typeof DELIVERY_ODDS_SERVICES)[number];
 
 export const DELIVERY_ODDS_SERVICE_LABELS: Record<DeliveryOddsService, string> = {
-  whatsapp: "WhatsApp",
-  telegram: "Telegram",
-  google: "Google",
+  tiktok: "TikTok",
   instagram: "Instagram",
+  snapchat: "Snapchat",
+  discord: "Discord",
 };
 
 export interface DeliveryOddsEntry {
@@ -40,10 +40,10 @@ const BASE_ORDER: Omit<DeliveryOddsEntry, "ratePct">[] = [
 ];
 
 const RATES_BY_SERVICE: Record<DeliveryOddsService, number[]> = {
-  whatsapp: [97, 95, 93, 88, 76, 63],
-  telegram: [96, 94, 92, 90, 81, 70],
-  google: [95, 93, 90, 85, 72, 58],
+  tiktok: [96, 94, 91, 87, 74, 60],
   instagram: [94, 92, 89, 84, 70, 55],
+  snapchat: [93, 90, 86, 80, 66, 50],
+  discord: [95, 92, 88, 83, 71, 57],
 };
 
 export function getDeliveryOdds(service: DeliveryOddsService): DeliveryOddsEntry[] {

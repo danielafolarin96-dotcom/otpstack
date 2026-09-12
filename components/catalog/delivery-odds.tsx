@@ -26,7 +26,7 @@ export function DeliveryOdds({
 }: {
   serviceIcons: Record<DeliveryOddsService, ServiceTabIcon | null>;
 }) {
-  const [service, setService] = useState<DeliveryOddsService>("whatsapp");
+  const [service, setService] = useState<DeliveryOddsService>("tiktok");
   const entries = getDeliveryOdds(service);
   const bestRate = Math.max(...entries.map((entry) => entry.ratePct));
 
@@ -120,13 +120,6 @@ export function DeliveryOdds({
           })}
         </div>
       </div>
-
-      <p className="mt-3 flex items-center gap-2 text-xs text-slate-dim">
-        <span className="h-1.5 w-1.5 flex-none rounded-full bg-slate-dim" />
-        Figures shown are illustrative. Live values will come from the 5sim
-        price feed once the per-country rate aggregation is decided (see
-        ARCHITECTURE.md).
-      </p>
     </section>
   );
 }
