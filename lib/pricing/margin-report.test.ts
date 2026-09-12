@@ -1,0 +1,86 @@
+import { describe, expect, it } from "vitest";
+import { summarizeMargin, TARGET_MARGIN_PCT, type MarginOrderInput } from "./margin-report";
+
+const WHATSAPP = { serviceId: "svc-whatsapp", serviceName: "WhatsApp" };
+const TELEGRAM = { serviceId: "svc-telegram", serviceName: "Telegram" };
+
+function order(overrides: Partial<MarginOrderInput>): MarginOrderInput {
+  return {
+    status: "sms_received",
+    priceKobo: 100_000,
+    upstreamCostKobo: 70_000,
+    ...WHATSAPP,
+    ...overrides,
+  };
+}
+
+describe("summarizeMargin", () => {
+  it("computes overall revenue, cost, and margin across revenue-kept orders", () => {
+    const report = summarizeMargin([
+      order({ priceKobo: 100_000, upstreamCostKobo: 70_000 }),
+      order({ status: "pending", priceKobo: 50_000, upstreamCostKobo: 40_000 }),
+    ]);
+
+    expect(report.overall.orderCount).toBe(2);
+    expect(report.overall.revenueKobo).toBe(150_000);
+    expect(report.overall.costKobo).toBe(110_000);
+    expect(report.overall.marginPct).toBeCloseTo(((150_000 - 110_000) / 150_000) * 100, 5);
+  });
+
+  it("excludes refunded orders from overall revenue/cost, tracking their cost separately", () => {
+    const report = summarizeMargin([
+      order({ priceKobo: 100_000, upstreamCostKobo: 70_000 }),
+      order({ status: "expired_refunded", priceKobo: 50_000, upstreamCostKobo: 40_000 }),
+      order({ status: "cancelled_refunded", priceKobo: 60_000, upstreamCostKobo: 45_000 }),
+    ]);
+
+    expect(report.overall.orderCount).toBe(1);
+    expect(report.overall.revenueKobo).toBe(100_000);
+    expect(report.overall.costKobo).toBe(70_000);
+
+    expect(report.refunded.orderCount).toBe(2);
+    expect(report.refunded.costKobo).toBe(85_000);
+  });
+
+  it("counts a banned order as revenue-kept (no automatic refund, per ARCHITECTURE.md)", () => {
+    const report = summarizeMargin([order({ status: "banned", priceKobo: 100_000, upstreamCostKobo: 70_000 })]);
+
+    expect(report.overall.orderCount).toBe(1);
+    expect(report.overall.revenueKobo).toBe(100_000);
+    expect(report.refunded.orderCount).toBe(0);
+  });
+
+  it("breaks revenue-kept orders down per service, worst margin first", () => {
+    const report = summarizeMargin([
+      order({ ...WHATSAPP, priceKobo: 100_000, upstreamCostKobo: 60_000 }), // 40% margin
+      order({ ...TELEGRAM, priceKobo: 100_000, upstreamCostKobo: 90_000 }), // 10% margin
+    ]);
+
+    expect(report.byService.map((r) => r.serviceId)).toEqual([TELEGRAM.serviceId, WHATSAPP.serviceId]);
+    expect(report.byService[0].marginPct).toBeCloseTo(10, 5);
+    expect(report.byService[1].marginPct).toBeCloseTo(40, 5);
+  });
+
+  it("aggregates multiple orders for the same service into one row", () => {
+    const report = summarizeMargin([
+      order({ priceKobo: 100_000, upstreamCostKobo: 70_000 }),
+      order({ priceKobo: 200_000, upstreamCostKobo: 140_000 }),
+    ]);
+
+    expect(report.byService).toHaveLength(1);
+    expect(report.byService[0].orderCount).toBe(2);
+    expect(report.byService[0].revenueKobo).toBe(300_000);
+    expect(report.byService[0].costKobo).toBe(210_000);
+  });
+
+  it("returns an empty, zeroed report for no orders", () => {
+    const report = summarizeMargin([]);
+    expect(report.overall).toEqual({ orderCount: 0, revenueKobo: 0, costKobo: 0, marginPct: 0 });
+    expect(report.refunded).toEqual({ orderCount: 0, costKobo: 0 });
+    expect(report.byService).toEqual([]);
+  });
+
+  it("exposes the 30% target as a named constant matching CLAUDE.md", () => {
+    expect(TARGET_MARGIN_PCT).toBe(30);
+  });
+});
