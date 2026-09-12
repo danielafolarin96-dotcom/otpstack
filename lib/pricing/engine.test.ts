@@ -22,7 +22,7 @@ const GLOBAL_TIERED_RULE = {
     { max_cost_kobo: 50_000, markup_pct: 200 },
     { max_cost_kobo: 500_000, markup_pct: 140 },
   ],
-  min_margin_pct: 60,
+  min_margin_pct: 30,
 };
 
 function fakeSupabase(options: {
