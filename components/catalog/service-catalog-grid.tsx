@@ -53,11 +53,16 @@ function ServiceLogo({
   // TradingView) would otherwise go invisible in dark mode, and a
   // near-white one would go invisible against the white fix for that —
   // see lib/icons/lookup.ts's isNearWhite and globals.css's
-  // --icon-surface(-inverse).
+  // --icon-surface(-inverse). Border is the matching fixed
+  // --icon-surface(-inverse)-border, not --line: --line is theme-following
+  // and near-white in light mode, which let the white tile disappear into
+  // the equally-white light-mode card behind it.
   return (
     <div
-      className={`flex h-12 w-12 items-center justify-center rounded-[10px] border border-line p-2 ${
-        iconIsNearWhite ? "bg-icon-surface-inverse" : "bg-icon-surface"
+      className={`flex h-12 w-12 items-center justify-center rounded-[10px] border p-2 ${
+        iconIsNearWhite
+          ? "bg-icon-surface-inverse border-icon-surface-inverse-border"
+          : "bg-icon-surface border-icon-surface-border"
       }`}
     >
       <svg viewBox="0 0 24 24" role="img" aria-label={`${name} logo`} className="h-full w-full">

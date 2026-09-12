@@ -30,6 +30,16 @@
      invisible on dark-mode --paper. See lib/icons/lookup.ts's
      isNearWhite. */
   --icon-surface-inverse: #1a1712;
+  /* Borders for the two tiles above, deliberately NOT --line: --line is
+     near-white in light mode (#eae1d2), which made the --icon-surface
+     tile (opaque white) blend into the equally-white light-mode
+     --paper-raised card behind it — no logo needed to be near-white for
+     the tile itself to disappear. rgba black/white composite against
+     each tile's own opaque fill (painted before the border, per the CSS
+     box model), not against whatever card sits behind it, so each stays
+     a visible ring regardless of theme or the card color around it. */
+  --icon-surface-border: rgba(0, 0, 0, 0.3);
+  --icon-surface-inverse-border: rgba(255, 255, 255, 0.3);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -63,6 +73,8 @@
   --color-good: var(--good);
   --color-icon-surface: var(--icon-surface);
   --color-icon-surface-inverse: var(--icon-surface-inverse);
+  --color-icon-surface-border: var(--icon-surface-border);
+  --color-icon-surface-inverse-border: var(--icon-surface-inverse-border);
 
   --font-display: var(--font-sora);
   --font-body: var(--font-manrope);
