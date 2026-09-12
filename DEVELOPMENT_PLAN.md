@@ -51,3 +51,8 @@ Phased so each stage produces something testable. No fixed dates — sequence an
 - Monitor actual margin against the 30% target; tune `pricing_rules` accordingly.
 - Watch for abuse patterns not caught pre-launch; iterate on Phase 6.
 - Expand the curated service/country list based on demand.
+
+## Phase 10 — Account settings
+- Dashboard Settings page: edit full name and username (respecting the unique constraint, with a clear inline error on collision), replacing the "coming soon" placeholder.
+- Change password through Supabase Auth's own update-password flow — never a custom field the app stores or validates.
+- Email changes out of scope for now — touches Auth identity and needs its own re-verification handling.
