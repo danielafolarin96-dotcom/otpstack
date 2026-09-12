@@ -65,17 +65,25 @@ export function ServiceCatalogGrid({
   buyingServiceId?: string | null;
   countryName: string;
 }) {
+  // Hidden for now rather than shown as a disabled/greyed tile — at the
+  // full catalog scale (Stage 4: 722 services x 80 countries) most
+  // countries only stock a fraction of the catalog, so showing everything
+  // regardless of availability made the grid mostly "Unavailable" tiles.
+  const available = entries.filter(
+    (e): e is CatalogGridEntry & { price: NonNullable<CatalogGridEntry["price"]> } => e.price !== null,
+  );
+
   const categories = useMemo(() => {
-    const set = new Set(entries.map((e) => e.service.category));
+    const set = new Set(available.map((e) => e.service.category));
     return ["All", ...Array.from(set).sort()];
-  }, [entries]);
+  }, [available]);
   const [active, setActive] = useState("All");
   const [query, setQuery] = useState("");
 
   const normalizedQuery = query.trim().toLowerCase();
   const countryMatches = normalizedQuery !== "" && countryName.toLowerCase().includes(normalizedQuery);
 
-  const filtered = entries.filter((e) => {
+  const filtered = available.filter((e) => {
     if (active !== "All" && e.service.category !== active) return false;
     if (normalizedQuery === "") return true;
     return countryMatches || e.service.name.toLowerCase().includes(normalizedQuery);
@@ -119,16 +127,16 @@ export function ServiceCatalogGrid({
               <ServiceLogo name={service.name} iconPath={service.iconPath} iconHex={service.iconHex} />
               <p className="text-sm font-medium text-text">{service.name}</p>
               <p className="font-technical text-sm text-signal">
-                {price ? `Get ${service.name} from ₦${formatNairaWhole(price.priceKobo)}` : "—"}
+                Get {service.name} from ₦{formatNairaWhole(price.priceKobo)}
               </p>
               {onBuy && (
                 <button
                   type="button"
-                  disabled={!price || Boolean(buyingServiceId)}
+                  disabled={Boolean(buyingServiceId)}
                   onClick={() => onBuy(service.id)}
                   className="mt-1 w-full rounded-[10px] bg-signal px-3 py-1.5 text-xs font-semibold text-paper transition-colors hover:bg-signal-bright disabled:opacity-50"
                 >
-                  {isBuying ? "Buying…" : price ? "Buy" : "Unavailable"}
+                  {isBuying ? "Buying…" : "Buy"}
                 </button>
               )}
             </div>
