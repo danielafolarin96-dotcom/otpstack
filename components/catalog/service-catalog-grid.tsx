@@ -3,7 +3,14 @@
 import { useMemo, useState } from "react";
 
 export interface CatalogGridEntry {
-  service: { id: string; name: string; category: string; iconKey: string };
+  service: {
+    id: string;
+    name: string;
+    category: string;
+    iconKey: string;
+    iconPath: string | null;
+    iconHex: string | null;
+  };
   price: { priceKobo: number } | null;
 }
 
@@ -11,15 +18,17 @@ function formatNairaWhole(kobo: number) {
   return Math.round(kobo / 100).toLocaleString("en-NG");
 }
 
-// Real brand logos via Simple Icons' free CDN (cdn.simpleicons.org/<slug>),
-// keyed off services.icon_key — full brand color by default, per the
-// landing-page redesign (see DESIGN.md's updated "Icon tiles" note). Falls
-// back to the original ink-initial tile if a slug has no matching icon or
-// the request fails, so a bad icon_key never breaks the grid.
-function ServiceLogo({ name, iconKey }: { name: string; iconKey: string }) {
-  const [failed, setFailed] = useState(false);
-
-  if (failed || !iconKey) {
+// Real brand logos via the simple-icons npm package — path/hex are already
+// resolved server-side (lib/icons/lookup.ts, via lib/pricing/catalog.ts) so
+// this component never imports the ~3,500-icon package itself, only ever
+// rendering the couple dozen paths a given page actually needs. Full brand
+// color by default, per DESIGN.md's "Icon tiles" note. Falls back to the
+// neutral ink-initial tile whenever a service's icon_key has no current
+// Simple Icons match — not every brand has one (verified: Amazon,
+// Microsoft, and LinkedIn currently don't), so this is an expected,
+// regular code path, not an error case.
+function ServiceLogo({ name, iconPath, iconHex }: { name: string; iconPath: string | null; iconHex: string | null }) {
+  if (!iconPath || !iconHex) {
     return (
       <div className="flex h-12 w-12 items-center justify-center rounded-[10px] border border-line bg-paper font-display text-lg font-bold text-ink">
         {name.charAt(0)}
@@ -29,14 +38,9 @@ function ServiceLogo({ name, iconKey }: { name: string; iconKey: string }) {
 
   return (
     <div className="flex h-12 w-12 items-center justify-center rounded-[10px] border border-line bg-paper p-2">
-      {/* eslint-disable-next-line @next/next/no-img-element -- external brand icon, not a Next/Image asset */}
-      <img
-        src={`https://cdn.simpleicons.org/${iconKey}`}
-        alt={`${name} logo`}
-        className="h-full w-full object-contain"
-        loading="lazy"
-        onError={() => setFailed(true)}
-      />
+      <svg viewBox="0 0 24 24" role="img" aria-label={`${name} logo`} className="h-full w-full">
+        <path d={iconPath} fill={`#${iconHex}`} />
+      </svg>
     </div>
   );
 }
@@ -112,7 +116,7 @@ export function ServiceCatalogGrid({
               key={service.id}
               className="flex flex-col items-center gap-2 rounded-[14px] border border-line bg-paper-raised p-4 text-center"
             >
-              <ServiceLogo name={service.name} iconKey={service.iconKey} />
+              <ServiceLogo name={service.name} iconPath={service.iconPath} iconHex={service.iconHex} />
               <p className="text-sm font-medium text-text">{service.name}</p>
               <p className="font-technical text-sm text-signal">
                 {price ? `Get ${service.name} from ₦${formatNairaWhole(price.priceKobo)}` : "—"}

@@ -3,12 +3,15 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/types/database";
 import { fetchAllPricingRules, fetchLatestFxRate, priceFromRulesAndRate, type ResolvedPrice } from "./engine";
 import { getProductPrices } from "@/lib/5sim/client";
+import { getBrandIcon } from "@/lib/icons/lookup";
 
 export interface CatalogService {
   id: string;
   name: string;
   category: string;
   iconKey: string;
+  iconPath: string | null;
+  iconHex: string | null;
 }
 
 export interface CatalogEntry {
@@ -68,11 +71,14 @@ export async function computeCatalogPrices(
   }
 
   return services.map((row) => {
+    const brandIcon = getBrandIcon(row.icon_key);
     const service: CatalogService = {
       id: row.id,
       name: row.name,
       category: row.category,
       iconKey: row.icon_key,
+      iconPath: brandIcon?.path ?? null,
+      iconHex: brandIcon?.hex ?? null,
     };
 
     const upstreamProduct = productPrices[row.fivesim_product_code];
