@@ -135,7 +135,7 @@ export function RuleForm({ services, countries }: { services: Option[]; countrie
             name="min_margin_pct"
             type="number"
             step="0.01"
-            defaultValue={60}
+            defaultValue={30}
             required
             className={inputClass}
           />

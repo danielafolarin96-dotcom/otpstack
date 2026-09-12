@@ -53,7 +53,7 @@ OtpStack resells temporary phone numbers sourced from 5sim.net, priced in Nigeri
 - `service_id` (nullable), `country_id` (nullable)
 - `markup_type` (enum: `percent`, `flat_kobo`, `tiered`)
 - `markup_value` (numeric, or jsonb for tiers — e.g. `[{"max_cost_kobo":.., "markup_pct":..}, ...]`)
-- `min_margin_pct` (numeric — floor, e.g. 60)
+- `min_margin_pct` (numeric — floor, e.g. 30)
 - `priority` (int — service_country > service > country > global when resolving)
 - `updated_at`
 
@@ -67,7 +67,7 @@ OtpStack resells temporary phone numbers sourced from 5sim.net, priced in Nigeri
 1. Poll/refresh 5sim's price list for active services x countries on an interval (e.g. every 5-15 min), plus an on-demand check at purchase time, since 5sim prices and availability shift during the day.
 2. For a given (service, country), resolve the most specific applicable `pricing_rules` row: service_country > service > country > global.
 3. Compute a candidate NGN price: upstream_cost_ngn x (1 + markup_pct), or upstream_cost_ngn + flat_kobo, or per-tier if `tiered`.
-4. Enforce `min_margin_pct` (60% target) as a floor — if the markup formula would yield less than the minimum margin, use the minimum-margin price instead.
+4. Enforce `min_margin_pct` (30% target) as a floor — if the markup formula would yield less than the minimum margin, use the minimum-margin price instead.
 5. Convert upstream cost (5sim's currency) to NGN using the latest `fx_rates` entry, refreshed regularly — never a hardcoded constant.
 6. Recompute and cache displayed prices whenever the upstream price feed changes; always re-validate the exact price at the moment of purchase (it may have moved since page load) and reject/re-quote if it drifted materially.
 

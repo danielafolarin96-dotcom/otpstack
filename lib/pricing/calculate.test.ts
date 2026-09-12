@@ -110,4 +110,23 @@ describe("enforceMinMargin", () => {
   it("throws for a min_margin_pct of 100 or more (undefined floor price)", () => {
     expect(() => enforceMinMargin(100, 50, 100)).toThrow();
   });
+
+  // Project's actual configured floor as of the 60% -> 30% change (see the
+  // 20260912090000 migration): same cost/candidate as the 60%-floor case
+  // above, but at 30% the candidate's own 38.5% margin already clears the
+  // floor, so it passes through unchanged instead of being pushed up to a
+  // 60%-margin price — a real price decrease for pairs in this position.
+  it("at the current 30% floor, passes the candidate through once its own margin already clears it", () => {
+    // cost 320,000, candidate 520,000 -> margin 38.5%, above the 30% floor
+    const priced = enforceMinMargin(520_000, 320_000, 30);
+    expect(priced).toBe(520_000);
+    expect(marginPct(priced, 320_000)).toBeCloseTo(38.4615, 3);
+  });
+
+  it("still floors at 30% when the candidate's margin falls short of even that", () => {
+    // cost 320,000, candidate 400,000 -> margin 20%, below the 30% floor
+    const floored = enforceMinMargin(400_000, 320_000, 30);
+    expect(floored).toBe(Math.round(320_000 / 0.7));
+    expect(marginPct(floored, 320_000)).toBeCloseTo(30, 3);
+  });
 });

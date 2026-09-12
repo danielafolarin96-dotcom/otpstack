@@ -48,6 +48,6 @@ Phased so each stage produces something testable. No fixed dates — sequence an
 - Deploy to Vercel on the current `vercel.app` domain; move to a custom domain later per SECURITY.md's "before going live" checklist.
 
 ## Phase 9 — Post-launch
-- Monitor actual margin against the 60% target; tune `pricing_rules` accordingly.
+- Monitor actual margin against the 30% target; tune `pricing_rules` accordingly.
 - Watch for abuse patterns not caught pre-launch; iterate on Phase 6.
 - Expand the curated service/country list based on demand.
