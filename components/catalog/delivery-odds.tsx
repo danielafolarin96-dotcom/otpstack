@@ -40,9 +40,8 @@ export function DeliveryOdds({
           Know the odds before you pay.
         </h2>
         <p className="mt-2 text-sm leading-relaxed text-text-dim">
-          Every country and service pair carries a live delivery rate sourced
-          directly from our upstream provider, not an internal estimate.
-          Weigh it against the price and choose accordingly.
+          Every country and service pair carries its own delivery rate. Weigh
+          it against the price and choose accordingly.
         </p>
       </div>
 
