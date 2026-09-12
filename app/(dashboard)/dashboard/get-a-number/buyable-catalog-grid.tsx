@@ -7,9 +7,11 @@ import { ServiceCatalogGrid, type CatalogGridEntry } from "@/components/catalog/
 export function BuyableCatalogGrid({
   entries,
   countryId,
+  countryName,
 }: {
   entries: CatalogGridEntry[];
   countryId: string;
+  countryName: string;
 }) {
   const router = useRouter();
   const [buyingServiceId, setBuyingServiceId] = useState<string | null>(null);
@@ -47,7 +49,12 @@ export function BuyableCatalogGrid({
           {error}
         </p>
       )}
-      <ServiceCatalogGrid entries={entries} onBuy={handleBuy} buyingServiceId={buyingServiceId} />
+      <ServiceCatalogGrid
+        entries={entries}
+        onBuy={handleBuy}
+        buyingServiceId={buyingServiceId}
+        countryName={countryName}
+      />
     </div>
   );
 }

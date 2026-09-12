@@ -49,7 +49,7 @@ export default async function Home() {
         <section className="w-full max-w-[1080px]">
           <h2 className="mb-6 font-display text-2xl font-bold text-ink">Popular services</h2>
           {entries.length > 0 ? (
-            <ServiceCatalogGrid entries={entries} />
+            <ServiceCatalogGrid entries={entries} countryName={nigeria?.name ?? ""} />
           ) : (
             <p className="text-sm text-text-dim">No services configured yet.</p>
           )}

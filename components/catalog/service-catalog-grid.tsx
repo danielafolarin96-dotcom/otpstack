@@ -43,26 +43,50 @@ function ServiceLogo({ name, iconKey }: { name: string; iconKey: string }) {
 
 // onBuy is optional: the landing page (public, unauthenticated) renders
 // tiles read-only; the dashboard's "Get a number" page passes a handler to
-// make them purchasable.
+// make them purchasable. countryName is whichever single country the
+// passed-in entries were priced for (there's no per-entry country today —
+// entries are always scoped to one selected country) — the search box
+// matches it too, so e.g. typing a different country's name while
+// browsing Nigeria's catalog correctly empties the grid rather than
+// silently ignoring the query, which is the honest result until a country
+// switch happens via the separate country selector.
 export function ServiceCatalogGrid({
   entries,
   onBuy,
   buyingServiceId,
+  countryName,
 }: {
   entries: CatalogGridEntry[];
   onBuy?: (serviceId: string) => void;
   buyingServiceId?: string | null;
+  countryName: string;
 }) {
   const categories = useMemo(() => {
     const set = new Set(entries.map((e) => e.service.category));
     return ["All", ...Array.from(set).sort()];
   }, [entries]);
   const [active, setActive] = useState("All");
+  const [query, setQuery] = useState("");
 
-  const filtered = active === "All" ? entries : entries.filter((e) => e.service.category === active);
+  const normalizedQuery = query.trim().toLowerCase();
+  const countryMatches = normalizedQuery !== "" && countryName.toLowerCase().includes(normalizedQuery);
+
+  const filtered = entries.filter((e) => {
+    if (active !== "All" && e.service.category !== active) return false;
+    if (normalizedQuery === "") return true;
+    return countryMatches || e.service.name.toLowerCase().includes(normalizedQuery);
+  });
 
   return (
     <div className="flex flex-col gap-6">
+      <input
+        type="text"
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+        placeholder="Search services or country…"
+        className="w-full rounded-[10px] border border-line bg-paper px-3.5 py-2.5 text-sm text-text placeholder:text-slate-dim focus:border-signal focus:outline-none focus:ring-1 focus:ring-signal sm:max-w-xs"
+      />
+
       <div className="flex flex-wrap gap-2">
         {categories.map((category) => (
           <button
