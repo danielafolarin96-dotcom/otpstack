@@ -36,8 +36,12 @@ function ServiceLogo({ name, iconPath, iconHex }: { name: string; iconPath: stri
     );
   }
 
+  // Fixed white in both themes, not the theme-following --paper: a brand's
+  // hex color is designed against a light backdrop, so some (e.g.
+  // TradingView's near-black mark) would otherwise go invisible in dark
+  // mode — see the --icon-surface token in globals.css.
   return (
-    <div className="flex h-12 w-12 items-center justify-center rounded-[10px] border border-line bg-paper p-2">
+    <div className="flex h-12 w-12 items-center justify-center rounded-[10px] border border-line bg-icon-surface p-2">
       <svg viewBox="0 0 24 24" role="img" aria-label={`${name} logo`} className="h-full w-full">
         <path d={iconPath} fill={`#${iconHex}`} />
       </svg>

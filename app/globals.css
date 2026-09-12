@@ -16,6 +16,14 @@
   --text-dim: #6b6357;
   --danger: #c4432b;
   --good: #1f9d6b;
+  /* Fixed white in both themes, deliberately not paired with the dark-mode
+     block below — brand logo SVGs (see ServiceLogo in
+     components/catalog/service-catalog-grid.tsx) ship a fixed hex color
+     designed against a light backdrop, not a theme-aware one, so some
+     (e.g. TradingView's near-black mark) go invisible against dark-mode
+     --paper. Only real brand-logo tiles use this; the ink-initial fallback
+     tile keeps using --paper, since plain text safely follows the theme. */
+  --icon-surface: #ffffff;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -47,6 +55,7 @@
   --color-text-dim: var(--text-dim);
   --color-danger: var(--danger);
   --color-good: var(--good);
+  --color-icon-surface: var(--icon-surface);
 
   --font-display: var(--font-sora);
   --font-body: var(--font-manrope);
