@@ -42,7 +42,7 @@ Phased so each stage produces something testable. No fixed dates — sequence an
 - Terms of Service + Acceptable Use Policy (prohibits fraud/spam use) + Privacy Policy, linked at signup and in the footer.
 - FAQ content, support contact.
 
-## Phase 8 — QA & launch prep
+## Phase 8 — QA & launch prep (complete)
 - End-to-end test: signup -> top-up -> buy number -> receive/miss code -> refund path -> admin visibility, all against Paystack/5sim test or sandbox modes.
 - Switch Paystack and 5sim to live keys; re-run the same checklist with small real transactions.
 - Deploy to Vercel on the current `vercel.app` domain; move to a custom domain later per SECURITY.md's "before going live" checklist.
