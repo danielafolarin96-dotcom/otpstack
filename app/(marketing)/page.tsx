@@ -60,12 +60,14 @@ export default async function Home() {
 
   // The real catalog runs into the hundreds of services (see
   // DEVELOPMENT_PLAN.md's Stage 4 catalog scale-up), which made the public
-  // landing page an extremely long scroll. Cap what's shown here to a
-  // preview; the full searchable catalog still lives behind signup on the
-  // dashboard's "Get a number" page.
+  // landing page an extremely long scroll. ServiceCatalogGrid caps the
+  // *default* (unfiltered) view to this many as a teaser — but search and
+  // category filters always run against the full availableEntries below,
+  // so a visitor searching for a real, available service actually finds
+  // it instead of a false "No matches" (a service outside the teaser slice
+  // used to be unsearchable — see git history on this file).
   const LANDING_CATALOG_LIMIT = 10;
   const availableEntries = entries.filter((e) => e.price !== null);
-  const landingEntries = availableEntries.slice(0, LANDING_CATALOG_LIMIT);
 
   // Icons for the delivery-odds tabs are resolved here (server-only lookup)
   // and passed down as plain data, same split as ServiceCatalogGrid's
@@ -127,21 +129,12 @@ export default async function Home() {
 
         <section id="catalog" className="w-full max-w-[1080px]">
           <h2 className="mb-6 font-display text-2xl font-bold text-ink">Browse services</h2>
-          {landingEntries.length > 0 ? (
-            <>
-              <ServiceCatalogGrid entries={landingEntries} />
-              {availableEntries.length > landingEntries.length && (
-                <p className="mt-5 text-center text-sm text-text-dim">
-                  <Link
-                    href="/signup"
-                    className="font-semibold text-signal hover:text-signal-bright"
-                  >
-                    Create an account
-                  </Link>{" "}
-                  to browse all {availableEntries.length} services.
-                </p>
-              )}
-            </>
+          {availableEntries.length > 0 ? (
+            <ServiceCatalogGrid
+              entries={availableEntries}
+              previewLimit={LANDING_CATALOG_LIMIT}
+              previewCta={{ label: "Create an account", href: "/signup" }}
+            />
           ) : (
             <p className="text-sm text-text-dim">No services configured yet.</p>
           )}

@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import Link from "next/link";
 
 export interface CatalogGridEntry {
   service: {
@@ -77,14 +78,25 @@ function ServiceLogo({
 // make them purchasable. Country selection is a separate concern handled
 // by CountrySelect (its own search, scoped to the country picker) — this
 // search is services/apps only.
+//
+// previewLimit/previewCta: for the landing page only. Caps the grid to a
+// small teaser when nothing's actively being searched/filtered, but search
+// and category filters always run against the full `entries` set — a
+// visitor searching for a real, available service must find it, never a
+// silent "No matches" just because it fell outside the teaser slice. Omit
+// both on the dashboard's authenticated grid, where there's no cap at all.
 export function ServiceCatalogGrid({
   entries,
   onBuy,
   buyingServiceId,
+  previewLimit,
+  previewCta,
 }: {
   entries: CatalogGridEntry[];
   onBuy?: (serviceId: string) => void;
   buyingServiceId?: string | null;
+  previewLimit?: number;
+  previewCta?: { label: string; href: string };
 }) {
   // Hidden for now rather than shown as a disabled/greyed tile — at the
   // full catalog scale (Stage 4: 722 services x 80 countries) most
@@ -108,6 +120,9 @@ export function ServiceCatalogGrid({
     if (normalizedQuery === "") return true;
     return e.service.name.toLowerCase().includes(normalizedQuery);
   });
+
+  const isFiltering = active !== "All" || normalizedQuery !== "";
+  const displayed = previewLimit && !isFiltering ? filtered.slice(0, previewLimit) : filtered;
 
   return (
     <div className="flex flex-col gap-6">
@@ -149,7 +164,7 @@ export function ServiceCatalogGrid({
         </div>
       ) : (
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4">
-          {filtered.map(({ service, price }) => {
+          {displayed.map(({ service, price }) => {
             const isBuying = buyingServiceId === service.id;
             return (
               <div
@@ -180,6 +195,15 @@ export function ServiceCatalogGrid({
             );
           })}
         </div>
+      )}
+
+      {previewCta && !isFiltering && available.length > displayed.length && (
+        <p className="text-center text-sm text-text-dim">
+          <Link href={previewCta.href} className="font-semibold text-signal hover:text-signal-bright">
+            {previewCta.label}
+          </Link>{" "}
+          to browse all {available.length} services.
+        </p>
       )}
     </div>
   );
