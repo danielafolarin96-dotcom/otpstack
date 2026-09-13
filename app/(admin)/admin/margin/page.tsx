@@ -1,7 +1,10 @@
 import { createAdminClient } from "@/lib/supabase/admin";
+import { getProfile, type FiveSimProfile } from "@/lib/5sim/client";
+import { fetchLatestFxRate } from "@/lib/pricing/engine";
 import { summarizeMargin, TARGET_MARGIN_PCT } from "@/lib/pricing/margin-report";
 import { MarginSummaryCards } from "./margin-summary-cards";
 import { MarginByServiceTable } from "./margin-by-service-table";
+import { FiveSimAccountCards } from "./fivesim-account-cards";
 
 export default async function AdminMarginPage() {
   const admin = createAdminClient();
@@ -20,6 +23,27 @@ export default async function AdminMarginPage() {
     })),
   );
 
+  // Live server-side call, every render — ARCHITECTURE.md's admin panel
+  // section calls for "current 5sim account balance (server-side check, so
+  // the founder knows when to top up upstream)," which rules out caching
+  // this. Same degrade-gracefully pattern as the Overview page: a 5sim
+  // outage or a missing fx_rates row shouldn't take down the whole margin
+  // report, just the account card's live pieces.
+  let profile: FiveSimProfile | null = null;
+  let profileError: string | null = null;
+  try {
+    profile = await getProfile();
+  } catch (err) {
+    profileError = err instanceof Error ? err.message : "Unknown error";
+  }
+
+  let ngnRate: number | null = null;
+  try {
+    ngnRate = await fetchLatestFxRate(admin, "USD_NGN");
+  } catch {
+    ngnRate = null;
+  }
+
   return (
     <div className="flex flex-col gap-6">
       <div>
@@ -33,6 +57,8 @@ export default async function AdminMarginPage() {
       </div>
 
       <MarginSummaryCards report={report} target={TARGET_MARGIN_PCT} />
+
+      <FiveSimAccountCards profile={profile} profileError={profileError} ngnRate={ngnRate} report={report} />
 
       <div>
         <h2 className="mb-3 font-display text-lg font-bold text-ink">By service</h2>
