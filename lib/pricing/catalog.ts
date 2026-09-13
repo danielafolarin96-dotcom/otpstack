@@ -30,10 +30,10 @@ const UPSTREAM_CURRENCY_PAIR = "USD_NGN"; // 5sim prices observed in USD — see
 
 // Fetches active services, the target country's fivesim code, all pricing
 // rules, and the current fx rate, then makes exactly one live 5sim call
-// (GET /guest/products/{country}/any returns every product's price for
-// that country at once) rather than one call per service. Replaces Phase
-// 3's mock-upstream-costs.ts placeholder now that lib/5sim/client.ts
-// exists.
+// (GET /guest/prices?country= returns every product's price across every
+// operator for that country at once) rather than one call per service.
+// Replaces Phase 3's mock-upstream-costs.ts placeholder now that
+// lib/5sim/client.ts exists.
 export async function computeCatalogPrices(
   admin: SupabaseClient<Database>,
   countryId: string,
@@ -89,7 +89,7 @@ export async function computeCatalogPrices(
     }
 
     const price = priceFromRulesAndRate(allRules, fxRate, row.id, countryId, {
-      amount: upstreamProduct.Price,
+      amount: upstreamProduct.cost,
       currency: "USD",
     });
     return { service, price };

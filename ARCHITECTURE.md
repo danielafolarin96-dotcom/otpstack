@@ -89,7 +89,9 @@ OtpStack resells temporary phone numbers sourced from 5sim.net, priced in Nigeri
 |---|---|---|
 | `/guest/countries` | GET | List available countries/operators |
 | `/guest/products/{country}/{operator}` | GET | Available products + pricing for a country/operator |
-| `/guest/prices?country=&product=` | GET | Full price list, optionally filtered |
+| `/guest/prices?country=&product=` | GET | Full price list, per operator, with each operator's `cost`, `count` (stock), and `rate` (overall delivery success %, sometimes several windowed variants like `rate1`/`rate24`/`rate720`, sometimes omitted entirely) — used by `getProductPrices` in `lib/5sim/client.ts`, see the operator-selection rule below |
+
+**Operator selection (confirmed, Sept 2026)** — `/guest/prices` nests operators under each product, and their reliability varies independently of cost. A real diagnostic purchase found the cheapest operator for a TikTok/USA number had only a 45% delivery rate and never delivered a code, while a slightly pricier operator on the same product/country had an 80% rate and delivered cleanly. `getProductPrices` therefore prefers reliability over raw cost: it excludes out-of-stock operators, then excludes any operator with a confirmed `rate` below 50% (a floor, not a target — chosen to exclude clearly-bad operators without starving most product/country pairs of an eligible one), then picks the cheapest of what's left. An operator with no `rate` field at all (5sim omits it for some operators regardless of stock — observed live) is treated as unproven rather than unreliable, so it isn't excluded by the floor. If every in-stock operator falls below the floor, the cheapest in-stock operator is used as a fallback rather than returning nothing. `purchaseNumber` (`lib/orders/purchase.ts`) buys from the exact operator this selection returns — not `"any"` — so the reliability check governs the number that's actually purchased, not just the displayed price.
 
 **Purchase**
 | Endpoint | Method | Purpose |

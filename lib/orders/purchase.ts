@@ -103,7 +103,7 @@ export async function purchaseNumber(
   ]);
 
   const resolved = priceFromRulesAndRate(allRules, fxRate, service.id, country.id, {
-    amount: upstreamProduct.Price,
+    amount: upstreamProduct.cost,
     currency: "USD",
   });
 
@@ -121,7 +121,11 @@ export async function purchaseNumber(
   // above this line has written anything or cost anything.
   let fivesimOrder;
   try {
-    fivesimOrder = await buyActivation(country.fivesim_country_code, service.fivesim_product_code);
+    fivesimOrder = await buyActivation(
+      country.fivesim_country_code,
+      upstreamProduct.operator,
+      service.fivesim_product_code,
+    );
   } catch (err) {
     throw new PurchaseError(`Failed to purchase from 5sim: ${errorMessage(err)}`, 502);
   }

@@ -104,7 +104,7 @@ const baseRpcResult = () => ({
 beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(getProductPrices).mockResolvedValue({
-    whatsapp: { Category: "activation", Qty: 100, Price: 0.28 },
+    whatsapp: { operator: "virtual2", cost: 0.28, count: 100, rate: 80 },
   });
   vi.mocked(buyActivation).mockResolvedValue(FIVESIM_ORDER);
   vi.mocked(cancelOrder).mockResolvedValue({ ...FIVESIM_ORDER, status: "CANCELED" });
@@ -122,7 +122,7 @@ describe("purchaseNumber", () => {
 
     expect(result.order.id).toBe("order-1");
     expect(result.order.phoneNumber).toBe(FIVESIM_ORDER.phone);
-    expect(buyActivation).toHaveBeenCalledWith("nigeria", "whatsapp");
+    expect(buyActivation).toHaveBeenCalledWith("nigeria", "virtual2", "whatsapp");
     expect(client.rpc).toHaveBeenCalledWith(
       "create_order_and_debit_wallet",
       expect.objectContaining({
