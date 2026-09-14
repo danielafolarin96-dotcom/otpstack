@@ -131,6 +131,8 @@ describe("purchaseNumber", () => {
         p_country_code: "nigeria",
         p_fivesim_order_id: String(FIVESIM_ORDER.id),
         p_phone_number: FIVESIM_ORDER.phone,
+        p_fivesim_operator: "virtual2",
+        p_fivesim_operator_rate: 80,
       }),
     );
     expect(cancelOrder).not.toHaveBeenCalled();

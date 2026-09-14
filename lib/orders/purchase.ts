@@ -153,6 +153,12 @@ export async function purchaseNumber(
     p_upstream_cost_kobo: upstreamCostKobo,
     p_expires_at: expiresAt,
     p_metadata: { fivesim_order_id: fivesimOrder.id, service: service.name, country: country.name },
+    // Captured for the reliability-floor question in lib/5sim/client.ts
+    // (MIN_ACCEPTABLE_DELIVERY_RATE) — lets a future pass join actual order
+    // outcomes (sms_received vs expired/cancelled) against the operator's
+    // rate at purchase time instead of guessing at a floor.
+    p_fivesim_operator: upstreamProduct.operator,
+    p_fivesim_operator_rate: upstreamProduct.rate,
   });
 
   if (rpcError || !order) {

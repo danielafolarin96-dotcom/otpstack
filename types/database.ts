@@ -134,6 +134,8 @@ export type Database = {
           country_code: string
           created_at: string
           expires_at: string
+          fivesim_operator: string | null
+          fivesim_operator_rate: number | null
           fivesim_order_id: string
           id: string
           otp_code: string | null
@@ -150,6 +152,8 @@ export type Database = {
           country_code: string
           created_at?: string
           expires_at: string
+          fivesim_operator?: string | null
+          fivesim_operator_rate?: number | null
           fivesim_order_id: string
           id?: string
           otp_code?: string | null
@@ -166,6 +170,8 @@ export type Database = {
           country_code?: string
           created_at?: string
           expires_at?: string
+          fivesim_operator?: string | null
+          fivesim_operator_rate?: number | null
           fivesim_order_id?: string
           id?: string
           otp_code?: string | null
@@ -407,6 +413,8 @@ export type Database = {
         Args: {
           p_country_code: string
           p_expires_at: string
+          p_fivesim_operator?: string
+          p_fivesim_operator_rate?: number
           p_fivesim_order_id: string
           p_metadata?: Json
           p_phone_number: string
@@ -420,6 +428,8 @@ export type Database = {
           country_code: string
           created_at: string
           expires_at: string
+          fivesim_operator: string | null
+          fivesim_operator_rate: number | null
           fivesim_order_id: string
           id: string
           otp_code: string | null
