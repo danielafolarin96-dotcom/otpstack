@@ -269,6 +269,24 @@ export type Database = {
         }
         Relationships: []
       }
+      reporting_epochs: {
+        Row: {
+          fivesim_balance_usd: number
+          id: string
+          set_at: string
+        }
+        Insert: {
+          fivesim_balance_usd: number
+          id?: string
+          set_at?: string
+        }
+        Update: {
+          fivesim_balance_usd?: number
+          id?: string
+          set_at?: string
+        }
+        Relationships: []
+      }
       services: {
         Row: {
           category: string

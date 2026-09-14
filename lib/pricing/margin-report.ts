@@ -28,6 +28,20 @@ export interface MarginOrderInput {
   // this field existed (see the migration's backfill) or where the
   // best-effort tracking write itself failed.
   upstreamCancelSucceeded: boolean | null;
+  // ISO timestamp — needed only to apply `sinceEpochAt` below. Reporting
+  // scope, not a money field.
+  createdAt: string;
+}
+
+export interface SummarizeMarginOptions {
+  // Reporting-epoch feature (see lib/pricing/reporting-epoch.ts and the
+  // admin Margin page): when set, orders with createdAt before this ISO
+  // timestamp are excluded entirely — not counted in overall, refunded, or
+  // byService. This is a pure display filter: it changes nothing about
+  // what's stored in orders/wallet_transactions, only what this function
+  // reports. null/undefined (the default) means "all-time," matching this
+  // function's behavior before the epoch feature existed.
+  sinceEpochAt?: string | null;
 }
 
 export interface MarginBucket {
@@ -83,7 +97,9 @@ function finalizeBucket(bucket: MarginBucket): MarginBucket {
   return { ...bucket, marginPct: marginPct(bucket.revenueKobo, bucket.costKobo) };
 }
 
-export function summarizeMargin(orders: MarginOrderInput[]): MarginReport {
+export function summarizeMargin(orders: MarginOrderInput[], options: SummarizeMarginOptions = {}): MarginReport {
+  const cutoffMs = options.sinceEpochAt ? new Date(options.sinceEpochAt).getTime() : null;
+
   const overall = emptyBucket();
   const refunded = {
     orderCount: 0,
@@ -95,6 +111,8 @@ export function summarizeMargin(orders: MarginOrderInput[]): MarginReport {
   const byServiceMap = new Map<string, ServiceMarginRow>();
 
   for (const order of orders) {
+    if (cutoffMs !== null && new Date(order.createdAt).getTime() < cutoffMs) continue;
+
     if (REFUNDED_STATUSES.has(order.status)) {
       refunded.orderCount += 1;
       refunded.costKobo += order.upstreamCostKobo;

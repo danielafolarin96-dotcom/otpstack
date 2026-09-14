@@ -10,6 +10,7 @@ function order(overrides: Partial<MarginOrderInput>): MarginOrderInput {
     priceKobo: 100_000,
     upstreamCostKobo: 70_000,
     upstreamCancelSucceeded: null,
+    createdAt: "2026-06-01T00:00:00.000Z",
     ...WHATSAPP,
     ...overrides,
   };
@@ -104,5 +105,63 @@ describe("summarizeMargin", () => {
 
   it("exposes the 30% target as a named constant matching CLAUDE.md", () => {
     expect(TARGET_MARGIN_PCT).toBe(30);
+  });
+
+  describe("sinceEpochAt (reporting-epoch feature)", () => {
+    const EPOCH = "2026-09-14T11:50:31.935Z";
+
+    it("excludes an order created before the epoch and includes one created after it", () => {
+      const report = summarizeMargin(
+        [
+          order({ createdAt: "2026-09-14T11:50:31.934Z", priceKobo: 100_000, upstreamCostKobo: 70_000 }), // 1ms before — excluded
+          order({ createdAt: "2026-09-14T11:50:32.000Z", priceKobo: 50_000, upstreamCostKobo: 30_000 }), // after — included
+        ],
+        { sinceEpochAt: EPOCH },
+      );
+
+      expect(report.overall.orderCount).toBe(1);
+      expect(report.overall.revenueKobo).toBe(50_000);
+      expect(report.overall.costKobo).toBe(30_000);
+    });
+
+    it("treats createdAt exactly equal to the epoch as included (inclusive cutoff)", () => {
+      const report = summarizeMargin([order({ createdAt: EPOCH, priceKobo: 100_000, upstreamCostKobo: 70_000 })], {
+        sinceEpochAt: EPOCH,
+      });
+
+      expect(report.overall.orderCount).toBe(1);
+    });
+
+    it("also excludes pre-epoch orders from the refunded bucket, not just overall", () => {
+      const report = summarizeMargin(
+        [
+          order({
+            createdAt: "2026-01-01T00:00:00.000Z",
+            status: "expired_refunded",
+            upstreamCostKobo: 40_000,
+            upstreamCancelSucceeded: false,
+          }),
+          order({
+            createdAt: "2026-12-01T00:00:00.000Z",
+            status: "expired_refunded",
+            upstreamCostKobo: 25_000,
+            upstreamCancelSucceeded: true,
+          }),
+        ],
+        { sinceEpochAt: EPOCH },
+      );
+
+      expect(report.refunded.orderCount).toBe(1);
+      expect(report.refunded.costKobo).toBe(25_000);
+      expect(report.refunded.recovered).toEqual({ orderCount: 1, costKobo: 25_000 });
+    });
+
+    it("with no sinceEpochAt (default), behaves exactly as all-time — pre-epoch orders still count", () => {
+      const report = summarizeMargin([
+        order({ createdAt: "2020-01-01T00:00:00.000Z", priceKobo: 100_000, upstreamCostKobo: 70_000 }),
+      ]);
+
+      expect(report.overall.orderCount).toBe(1);
+    });
   });
 });

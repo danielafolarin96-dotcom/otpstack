@@ -2,16 +2,39 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { getProfile, type FiveSimProfile } from "@/lib/5sim/client";
 import { fetchLatestFxRate } from "@/lib/pricing/engine";
 import { summarizeMargin, TARGET_MARGIN_PCT } from "@/lib/pricing/margin-report";
+import { fetchCurrentReportingEpoch } from "@/lib/pricing/reporting-epoch";
 import { MarginSummaryCards } from "./margin-summary-cards";
 import { MarginByServiceTable } from "./margin-by-service-table";
 import { FiveSimAccountCards } from "./fivesim-account-cards";
+import { ReportingEpochBanner } from "./reporting-epoch-banner";
 
-export default async function AdminMarginPage() {
+export default async function AdminMarginPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ view?: string }>;
+}) {
+  const { view } = await searchParams;
+  const showAllTime = view === "all-time";
+
   const admin = createAdminClient();
 
-  const { data: orders } = await admin
-    .from("orders")
-    .select("status, price_kobo, upstream_cost_kobo, upstream_cancel_succeeded, service_id, services(name)");
+  const [{ data: orders }, epoch] = await Promise.all([
+    admin
+      .from("orders")
+      .select(
+        "status, price_kobo, upstream_cost_kobo, upstream_cancel_succeeded, service_id, created_at, services(name)",
+      ),
+    fetchCurrentReportingEpoch(admin),
+  ]);
+
+  // Reporting-epoch feature: defaults to only counting orders since the
+  // epoch was set (see lib/pricing/reporting-epoch.ts) so the headline
+  // numbers reflect the fixed system, not diluted by the already-
+  // understood pre-fix losses. Nothing here deletes or hides any row —
+  // ?view=all-time re-runs the exact same summarizeMargin with no cutoff
+  // to reach full history. If no epoch has ever been set, there's nothing
+  // to filter by, so this is all-time regardless of the view param.
+  const sinceEpochAt = !showAllTime && epoch ? epoch.setAt : null;
 
   const report = summarizeMargin(
     (orders ?? []).map((o) => ({
@@ -21,7 +44,9 @@ export default async function AdminMarginPage() {
       upstreamCancelSucceeded: o.upstream_cancel_succeeded,
       serviceId: o.service_id,
       serviceName: o.services?.name ?? "Unknown",
+      createdAt: o.created_at,
     })),
+    { sinceEpochAt },
   );
 
   // Live server-side call, every render — ARCHITECTURE.md's admin panel
@@ -57,9 +82,17 @@ export default async function AdminMarginPage() {
         </p>
       </div>
 
+      <ReportingEpochBanner epoch={epoch} showAllTime={showAllTime} />
+
       <MarginSummaryCards report={report} target={TARGET_MARGIN_PCT} />
 
-      <FiveSimAccountCards profile={profile} profileError={profileError} ngnRate={ngnRate} report={report} />
+      <FiveSimAccountCards
+        profile={profile}
+        profileError={profileError}
+        ngnRate={ngnRate}
+        report={report}
+        epochStartBalanceUsd={epoch && !showAllTime ? epoch.fivesimBalanceUsd : null}
+      />
 
       <div>
         <h2 className="mb-3 font-display text-lg font-bold text-ink">By service</h2>

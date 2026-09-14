@@ -21,11 +21,17 @@ export function FiveSimAccountCards({
   profileError,
   ngnRate,
   report,
+  epochStartBalanceUsd,
 }: {
   profile: FiveSimProfile | null;
   profileError: string | null;
   ngnRate: number | null;
   report: MarginReport;
+  // The 5sim balance recorded when the current reporting epoch was set
+  // (reporting_epochs.fivesim_balance_usd) — a reference point for "started
+  // at $X, now at $Y," not used in any calculation here. Null when viewing
+  // all-time (no single epoch start to anchor to) or when no epoch is set.
+  epochStartBalanceUsd: number | null;
 }) {
   // Real total ever paid to 5sim: refunded orders' upstream cost is not
   // netted into report.overall (see margin-report.ts — 5sim doesn't refund
@@ -81,6 +87,11 @@ export function FiveSimAccountCards({
               {lowRunway
                 ? `Only ~${Math.floor(estimatedOrdersRemaining)} orders of runway left at the current average cost — top up soon`
                 : `~${Math.floor(estimatedOrdersRemaining)} orders of runway at the current average cost`}
+            </p>
+          )}
+          {epochStartBalanceUsd !== null && (
+            <p className={`mt-1 text-xs ${lowRunway ? "text-danger" : "text-paper/70"}`}>
+              Started this reporting period at ${epochStartBalanceUsd.toLocaleString("en-US", { minimumFractionDigits: 2 })}
             </p>
           )}
         </div>
