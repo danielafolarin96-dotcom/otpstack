@@ -4,6 +4,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { checkOrder } from "@/lib/5sim/client";
 import { extractOtpCode, mapFiveSimOrderToStatus, type OrderStatus } from "@/lib/5sim/status";
 import { expireAndRefundOrder } from "@/lib/orders/expire-and-refund";
+import { recordWalletTransaction } from "@/lib/wallet/ledger";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/types/database";
 
@@ -121,6 +122,30 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
       `Order ${order.id} was already resolved by another path during status poll — reporting its actual state instead of overwriting it.`,
     );
     return NextResponse.json({ order: serialize(await refetchOrder(admin, order.id)) });
+  }
+
+  // Money bug fixed Sept 2026: 5sim's own TIMEOUT/CANCELED can (and per
+  // ARCHITECTURE.md's cancel-window note, routinely does) arrive before our
+  // 10-minute TTL fallback above or a manual cancel ever gets a chance to
+  // run — mapFiveSimOrderToStatus maps those straight to our
+  // expired_refunded/cancelled_refunded enum values, which every other path
+  // that reaches those statuses (expireAndRefundOrder, the cancel route)
+  // treats as "credit the wallet." This branch used to just write the
+  // status label without ever doing that, leaving the order looking
+  // refunded everywhere in the UI while the customer's money was never
+  // actually returned. Same reference format as those other paths
+  // (refund_expired_<id> / refund_cancelled_<id>), so if a near-simultaneous
+  // request already credited this exact order via one of them,
+  // recordWalletTransaction's unique-reference handling makes this a safe
+  // no-op instead of a double refund.
+  if (mappedStatus === "expired_refunded" || mappedStatus === "cancelled_refunded") {
+    await recordWalletTransaction(admin, {
+      userId: updated.user_id,
+      type: "refund",
+      amountKobo: updated.price_kobo,
+      reference: `refund_${mappedStatus === "expired_refunded" ? "expired" : "cancelled"}_${updated.id}`,
+      orderId: updated.id,
+    });
   }
 
   return NextResponse.json({ order: serialize(updated) });
