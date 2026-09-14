@@ -78,4 +78,48 @@ describe("POST /api/orders", () => {
     expect(json.error).toMatch(/too many/i);
     expect(purchaseNumber).not.toHaveBeenCalled();
   });
+
+  it("returns a clean JSON error, not a raw crash, when the 5sim buy call fails (real bug, Sept 2026)", async () => {
+    // Confirmed live: 5sim's "no free phones" response used to produce an
+    // uncaught parser exception that reached the customer verbatim (see
+    // lib/5sim/client.ts's fiveSimFetch and lib/orders/purchase.ts).
+    // purchaseNumber (lib/orders/purchase.ts) is responsible for mapping
+    // that to a clean PurchaseError — this test locks in that the route
+    // still just forwards it as ordinary JSON, same as any other
+    // PurchaseError, rather than letting anything escape uncaught.
+    getUser.mockResolvedValue({ data: { user: USER } });
+    const { PurchaseError } = await import("@/lib/orders/purchase");
+    vi.mocked(purchaseNumber).mockRejectedValue(
+      new PurchaseError(
+        "No numbers currently available for this service/country — try again shortly or pick a different country.",
+        502,
+      ),
+    );
+
+    const response = await POST(makeRequest({ serviceId: "service-1", countryId: "country-1" }));
+    const json = await response.json();
+
+    expect(response.status).toBe(502);
+    expect(json.error).toBe(
+      "No numbers currently available for this service/country — try again shortly or pick a different country.",
+    );
+  });
+
+  it("returns a JSON 500 instead of an unhandled crash when something throws before purchaseNumber is even called", async () => {
+    // Bug fix (Sept 2026): the auth check, both rate-limit lookups, and
+    // body parsing used to run outside any try/catch — only the final
+    // purchaseNumber() call was guarded. A throw anywhere above that
+    // point (e.g. a transient checkRateLimit failure, simulated here)
+    // used to become a raw, non-JSON error instead of the JSON response
+    // BuyableCatalogGrid expects. The whole handler is now one try/catch.
+    getUser.mockResolvedValue({ data: { user: USER } });
+    vi.mocked(checkRateLimit).mockRejectedValue(new Error("rate_limits table unreachable"));
+
+    const response = await POST(makeRequest({ serviceId: "service-1", countryId: "country-1" }));
+    const json = await response.json();
+
+    expect(response.status).toBe(500);
+    expect(json.error).toBe("Something went wrong");
+    expect(purchaseNumber).not.toHaveBeenCalled();
+  });
 });

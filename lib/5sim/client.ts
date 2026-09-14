@@ -112,7 +112,7 @@ export function selectBestOperator(
   return pool.reduce((best, price) => (price.cost < best.cost ? price : best));
 }
 
-class FiveSimError extends Error {
+export class FiveSimError extends Error {
   constructor(
     public path: string,
     public status: number,
@@ -122,6 +122,16 @@ class FiveSimError extends Error {
   }
 }
 
+// Confirmed live (Sept 2026): GET /user/buy/activation/.../.../tiktok
+// against a known-zero-stock operator returned HTTP 200,
+// Content-Type: text/plain, body "no free phones" — not JSON, and not
+// even a non-2xx status. response.json() on that throws a raw
+// SyntaxError ("Unexpected token 'o', "no free phones" is not valid
+// JSON") that used to escape all the way to the customer verbatim. Read
+// the body as text unconditionally and JSON.parse it ourselves instead,
+// so any non-JSON 5sim response — this one included, and any other we
+// haven't seen yet — becomes a normal FiveSimError instead of an
+// uncaught parser exception.
 async function fiveSimFetch<T>(path: string): Promise<T> {
   const response = await fetch(`${BASE_URL}${path}`, {
     headers: {
@@ -130,12 +140,48 @@ async function fiveSimFetch<T>(path: string): Promise<T> {
     },
   });
 
+  const body = await response.text();
+
   if (!response.ok) {
-    const body = await response.text();
     throw new FiveSimError(path, response.status, body);
   }
 
-  return response.json() as Promise<T>;
+  try {
+    return JSON.parse(body) as T;
+  } catch {
+    throw new FiveSimError(path, response.status, body);
+  }
+}
+
+// Every response GET /user/buy/activation/{country}/{operator}/{product}
+// can return, per https://5sim.net/docs' "Buy activation number" section
+// (confirmed Sept 2026, fetched directly — not inferred): "no free
+// phones" comes back as HTTP 200 plain text (the bug above); "not enough
+// user balance", "not enough rating", "select country", "select
+// operator", "bad country", "bad operator", "no product", and "server
+// offline" come back as HTTP 400; "internal error" as HTTP 500. None of
+// these are messages a customer should see verbatim — "not enough user
+// balance" in particular is about *our* 5sim account balance, not the
+// customer's wallet, and would be actively misleading shown as-is. Only
+// "no free phones" gets a distinct, actionable customer message; every
+// other known (and any unrecognized) failure gets the same generic
+// message, since none of them are something the customer can act on —
+// they're all either transient upstream issues or a bug on our side, and
+// either way the raw string is logged server-side (lib/orders/purchase.ts)
+// for us to investigate, not shown.
+const FIVESIM_BUY_ERROR_MESSAGES: Record<string, string> = {
+  "no free phones":
+    "No numbers currently available for this service/country — try again shortly or pick a different country.",
+};
+
+const GENERIC_PURCHASE_FAILURE_MESSAGE = "Something went wrong purchasing this number — please try again.";
+
+export function customerFacingPurchaseErrorMessage(rawMessage: string): string {
+  const normalized = rawMessage.trim().toLowerCase();
+  for (const [known, customerMessage] of Object.entries(FIVESIM_BUY_ERROR_MESSAGES)) {
+    if (normalized.includes(known)) return customerMessage;
+  }
+  return GENERIC_PURCHASE_FAILURE_MESSAGE;
 }
 
 export function getProfile(): Promise<FiveSimProfile> {

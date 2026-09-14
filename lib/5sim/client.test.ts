@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { selectBestOperator } from "./client";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { buyActivation, customerFacingPurchaseErrorMessage, FiveSimError, selectBestOperator } from "./client";
 
 describe("selectBestOperator", () => {
   it("picks the reliable operator over a cheaper one below the delivery-rate floor", () => {
@@ -67,5 +67,106 @@ describe("selectBestOperator", () => {
     });
 
     expect(result).toBeNull();
+  });
+});
+
+describe("fiveSimFetch (via buyActivation) — non-JSON response handling", () => {
+  const originalFetch = global.fetch;
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+  });
+
+  it("throws a FiveSimError instead of an uncaught parser exception when 5sim returns 200 with a plain-text body", async () => {
+    // Real bug (Sept 2026): confirmed live against 5sim's actual buy
+    // endpoint for a known-zero-stock operator — HTTP 200,
+    // Content-Type: text/plain, body "no free phones". response.json()
+    // on that throws "Unexpected token 'o', "no free phones" is not
+    // valid JSON", which used to escape uncaught all the way to the
+    // customer.
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: () => Promise.resolve("no free phones"),
+    } as Response);
+
+    await expect(buyActivation("england", "ee", "tiktok")).rejects.toBeInstanceOf(FiveSimError);
+    await expect(buyActivation("england", "ee", "tiktok")).rejects.toMatchObject({
+      status: 200,
+      body: "no free phones",
+    });
+  });
+
+  it("still returns the parsed order on a normal JSON response", async () => {
+    const order = {
+      id: 1,
+      phone: "+10000000000",
+      operator: "ee",
+      product: "tiktok",
+      price: 0.1,
+      status: "PENDING",
+      expires: "2026-01-01T00:20:00Z",
+      sms: [],
+      created_at: "2026-01-01T00:00:00Z",
+      country: "england",
+    };
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: () => Promise.resolve(JSON.stringify(order)),
+    } as Response);
+
+    await expect(buyActivation("england", "ee", "tiktok")).resolves.toEqual(order);
+  });
+
+  it("throws a FiveSimError for a documented non-2xx error too (e.g. a bad operator)", async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 400,
+      text: () => Promise.resolve("bad operator"),
+    } as Response);
+
+    await expect(buyActivation("england", "nonexistent", "tiktok")).rejects.toMatchObject({
+      status: 400,
+      body: "bad operator",
+    });
+  });
+});
+
+describe("customerFacingPurchaseErrorMessage", () => {
+  it("maps 5sim's 'no free phones' response to an actionable, customer-facing message", () => {
+    const message = customerFacingPurchaseErrorMessage(
+      "5sim /user/buy/activation/england/ee/tiktok failed: 200 no free phones",
+    );
+
+    expect(message).toBe(
+      "No numbers currently available for this service/country — try again shortly or pick a different country.",
+    );
+  });
+
+  // Every other response the buy endpoint documents (5sim.net/docs,
+  // confirmed Sept 2026) — none of these are things a customer can act
+  // on (they're either our 5sim account/integration issues or transient
+  // upstream problems), so none should be shown verbatim. In particular
+  // "not enough user balance" is about *our* 5sim account, not the
+  // customer's wallet.
+  it.each([
+    "not enough user balance",
+    "not enough rating",
+    "select country",
+    "select operator",
+    "bad country",
+    "bad operator",
+    "no product",
+    "server offline",
+    "internal error",
+  ])("maps '%s' to the generic message, never the raw 5sim text", (raw) => {
+    const message = customerFacingPurchaseErrorMessage(raw);
+    expect(message).toBe("Something went wrong purchasing this number — please try again.");
+  });
+
+  it("falls back to the generic message for a totally unrecognized error string", () => {
+    const message = customerFacingPurchaseErrorMessage("some future 5sim error we've never seen");
+    expect(message).toBe("Something went wrong purchasing this number — please try again.");
   });
 });

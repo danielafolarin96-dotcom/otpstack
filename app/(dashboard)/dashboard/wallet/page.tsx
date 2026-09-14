@@ -34,11 +34,27 @@ export default async function WalletPage({
 
   const balanceKobo = wallet?.balance_kobo ?? 0;
 
+  // Bug fix (Sept 2026): this used to render purely on whether a
+  // `reference` query param was present in the URL, with no check against
+  // whether that payment had actually landed — so the banner either
+  // vanished via PaymentStatusPoller's own 10-second client-side timeout
+  // regardless of real webhook status, or reappeared claiming "still
+  // confirming" for an already-completed topup whenever the user reloaded
+  // or revisited a URL that still carried an old `?reference=`.
+  // wallet_transactions.reference is the exact same string the callback
+  // URL is built with (`topup_${randomUUID()}`, see
+  // app/api/wallet/topup/route.ts) — so if a row with that reference is
+  // already in what we just fetched, the webhook already succeeded and
+  // there's nothing left to poll for.
+  const paymentAlreadyConfirmed = reference
+    ? (transactions ?? []).some((t) => t.reference === reference)
+    : false;
+
   return (
     <div className="flex flex-col gap-6">
       <h1 className="font-display text-2xl font-bold text-ink">Wallet & top-up</h1>
 
-      {reference && <PaymentStatusPoller reference={reference} />}
+      {reference && !paymentAlreadyConfirmed && <PaymentStatusPoller reference={reference} />}
 
       <div className="grid gap-6 md:grid-cols-2">
         <div className="rounded-[14px] border border-line bg-ink p-6 text-paper">

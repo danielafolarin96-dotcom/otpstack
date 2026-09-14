@@ -1,7 +1,7 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/types/database";
-import { buyActivation, cancelOrder, getProductPrices } from "@/lib/5sim/client";
+import { buyActivation, cancelOrder, customerFacingPurchaseErrorMessage, getProductPrices } from "@/lib/5sim/client";
 import { fetchAllPricingRules, fetchLatestFxRate, priceFromRulesAndRate } from "@/lib/pricing/engine";
 
 const ORDER_TTL_MINUTES = 10;
@@ -127,7 +127,19 @@ export async function purchaseNumber(
       service.fivesim_product_code,
     );
   } catch (err) {
-    throw new PurchaseError(`Failed to purchase from 5sim: ${errorMessage(err)}`, 502);
+    // Full 5sim error detail (which operator/product/country, the raw
+    // response) is logged here for us to investigate — the customer only
+    // ever sees the mapped, actionable message from
+    // customerFacingPurchaseErrorMessage (lib/5sim/client.ts), never the
+    // raw 5sim string. See that function's comment for why: several of
+    // 5sim's own error strings ("not enough user balance" in particular)
+    // describe our 5sim account, not the customer's wallet, and would be
+    // actively misleading shown as-is.
+    console.error(
+      `5sim buyActivation failed for ${service.fivesim_product_code}/${country.fivesim_country_code}:`,
+      err,
+    );
+    throw new PurchaseError(customerFacingPurchaseErrorMessage(errorMessage(err)), 502);
   }
 
   // 5sim's actual charged price can differ from the quote we just computed

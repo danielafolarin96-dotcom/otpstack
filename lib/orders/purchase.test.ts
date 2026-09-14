@@ -1,14 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/types/database";
-import { buyActivation, cancelOrder, getProductPrices } from "@/lib/5sim/client";
+import { buyActivation, cancelOrder, FiveSimError, getProductPrices } from "@/lib/5sim/client";
 import { PurchaseError, purchaseNumber } from "./purchase";
 
-vi.mock("@/lib/5sim/client", () => ({
-  buyActivation: vi.fn(),
-  cancelOrder: vi.fn(),
-  getProductPrices: vi.fn(),
-}));
+vi.mock("@/lib/5sim/client", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/5sim/client")>("@/lib/5sim/client");
+  // FiveSimError and customerFacingPurchaseErrorMessage stay real — the
+  // point of these tests is exercising that actual mapping, not mocking
+  // it away.
+  return { ...actual, buyActivation: vi.fn(), cancelOrder: vi.fn(), getProductPrices: vi.fn() };
+});
 
 const SERVICE = {
   id: "service-1",
@@ -212,8 +214,31 @@ describe("purchaseNumber", () => {
     await expect(
       purchaseNumber(client, { userId: "user-1", serviceId: SERVICE.id, countryId: COUNTRY.id }),
     ).rejects.toMatchObject({ status: 502 });
+    // No wallet debit, no order row — confirms ARCHITECTURE.md's ordering
+    // (buy succeeds -> THEN debit + order) held: a failed 5sim purchase
+    // never reaches the money-moving RPC at all.
     expect(client.rpc).not.toHaveBeenCalled();
     expect(cancelOrder).not.toHaveBeenCalled();
+  });
+
+  it("never leaks 5sim's raw error text to the customer — maps it to a clean, actionable message instead", async () => {
+    // Real bug (Sept 2026): a live TikTok/UK purchase hit 5sim's
+    // documented "no free phones" response (HTTP 200, plain text — see
+    // lib/5sim/client.ts's fiveSimFetch comment) and the raw parser
+    // exception message ("Unexpected token 'o', "no free phones" is not
+    // valid JSON") ended up shown to the customer verbatim.
+    vi.mocked(buyActivation).mockRejectedValue(
+      new FiveSimError("/user/buy/activation/england/ee/tiktok", 200, "no free phones"),
+    );
+    const client = fakeAdminClient(baseConfigs(), baseRpcResult());
+
+    await expect(
+      purchaseNumber(client, { userId: "user-1", serviceId: SERVICE.id, countryId: COUNTRY.id }),
+    ).rejects.toMatchObject({
+      status: 502,
+      message: "No numbers currently available for this service/country — try again shortly or pick a different country.",
+    });
+    expect(client.rpc).not.toHaveBeenCalled();
   });
 
   it("cancels upstream and reports insufficient balance when the RPC's atomic debit loses a balance race", async () => {

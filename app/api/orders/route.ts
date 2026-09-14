@@ -8,49 +8,57 @@ const PURCHASE_WINDOW_SECONDS = 60 * 60;
 const PURCHASE_MAX_PER_USER = 20;
 const PURCHASE_MAX_PER_IP = 40;
 
+// Bug fix (Sept 2026): everything below used to run with only the final
+// purchaseNumber() call wrapped in try/catch — the auth check, both
+// rate-limit lookups, and body parsing could all throw uncaught (e.g. a
+// transient Supabase hiccup on checkRateLimit), which Next.js turns into
+// a raw, non-JSON error response instead of the clean JSON error message
+// the frontend (BuyableCatalogGrid) expects. The whole handler body is
+// now one try/catch so every exit path — success, a known PurchaseError,
+// or anything unexpected — returns proper JSON, never an unhandled crash.
 export async function POST(request: Request) {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
-    return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
-  }
-
-  const admin = createAdminClient();
-  const [allowedForUser, allowedForIp] = await Promise.all([
-    checkRateLimit(admin, {
-      key: `purchase:user:${user.id}`,
-      windowSeconds: PURCHASE_WINDOW_SECONDS,
-      max: PURCHASE_MAX_PER_USER,
-    }),
-    checkRateLimit(admin, {
-      key: `purchase:ip:${getClientIp(request)}`,
-      windowSeconds: PURCHASE_WINDOW_SECONDS,
-      max: PURCHASE_MAX_PER_IP,
-    }),
-  ]);
-  if (!allowedForUser || !allowedForIp) {
-    return NextResponse.json(
-      { error: "Too many purchase attempts. Try again later." },
-      { status: 429 },
-    );
-  }
-
-  let body: unknown;
   try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
-  }
+    const supabase = await createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
 
-  const { serviceId, countryId } = (body as { serviceId?: unknown; countryId?: unknown }) ?? {};
-  if (typeof serviceId !== "string" || typeof countryId !== "string") {
-    return NextResponse.json({ error: "serviceId and countryId are required" }, { status: 400 });
-  }
+    if (!user) {
+      return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
+    }
 
-  try {
+    const admin = createAdminClient();
+    const [allowedForUser, allowedForIp] = await Promise.all([
+      checkRateLimit(admin, {
+        key: `purchase:user:${user.id}`,
+        windowSeconds: PURCHASE_WINDOW_SECONDS,
+        max: PURCHASE_MAX_PER_USER,
+      }),
+      checkRateLimit(admin, {
+        key: `purchase:ip:${getClientIp(request)}`,
+        windowSeconds: PURCHASE_WINDOW_SECONDS,
+        max: PURCHASE_MAX_PER_IP,
+      }),
+    ]);
+    if (!allowedForUser || !allowedForIp) {
+      return NextResponse.json(
+        { error: "Too many purchase attempts. Try again later." },
+        { status: 429 },
+      );
+    }
+
+    let body: unknown;
+    try {
+      body = await request.json();
+    } catch {
+      return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+    }
+
+    const { serviceId, countryId } = (body as { serviceId?: unknown; countryId?: unknown }) ?? {};
+    if (typeof serviceId !== "string" || typeof countryId !== "string") {
+      return NextResponse.json({ error: "serviceId and countryId are required" }, { status: 400 });
+    }
+
     const result = await purchaseNumber(admin, { userId: user.id, serviceId, countryId });
     return NextResponse.json(result);
   } catch (err) {
