@@ -1,0 +1,38 @@
+name: Expire pending orders
+
+# Vercel's Hobby plan only allows cron jobs to run once per day, which is far
+# too infrequent for a 10-minute order TTL (see ARCHITECTURE.md's order
+# lifecycle step 5, and app/api/cron/expire-orders/route.ts's own comment).
+# This workflow calls that same endpoint on a tighter schedule so abandoned
+# orders (no SMS, user closed the tab) get refunded close to on time instead
+# of waiting for the dashboard's own poll-triggered fallback or the daily
+# Vercel cron sweep.
+#
+# Requires a repository secret CRON_SECRET with the exact same value as the
+# CRON_SECRET environment variable already set in the Vercel project ---
+# Settings > Secrets and variables > Actions > New repository secret.
+
+on:
+  schedule:
+    # GitHub's scheduler has a documented floor of 5 minutes and can slip a
+    # few minutes further under load on the free tier --- fine here since
+    # this is a backstop, not the primary expiry path (the dashboard's own
+    # polling already resolves most orders faster than this).
+    - cron: "*/5 * * * *"
+  workflow_dispatch: {}
+
+jobs:
+  expire-orders:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call expire-orders cron endpoint
+        run: |
+          status=$(curl -sS -o /tmp/response.json -w "%{http_code}" \
+            -X GET "https://otpstack.com.ng/api/cron/expire-orders" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}")
+          echo "HTTP status: $status"
+          cat /tmp/response.json
+          if [ "$status" -ge 300 ]; then
+            echo "expire-orders call failed with status $status"
+            exit 1
+          fi
