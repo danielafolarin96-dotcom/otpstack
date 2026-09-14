@@ -45,9 +45,31 @@ export function MarginSummaryCards({ report, target }: { report: MarginReport; t
         <p className="text-sm text-text-dim">Refund cost</p>
         <p className="mt-2 font-technical text-3xl font-bold text-ink">{naira(report.refunded.costKobo)}</p>
         <p className="mt-1 text-xs text-text-dim">
-          {report.refunded.orderCount} refunded order{report.refunded.orderCount === 1 ? "" : "s"} — we
-          still paid 5sim, not netted above
+          {report.refunded.orderCount} refunded order{report.refunded.orderCount === 1 ? "" : "s"} — not
+          netted above
         </p>
+        <div className="mt-3 flex flex-col gap-1 border-t border-line pt-3 text-xs">
+          <div className="flex items-center justify-between">
+            <span className="text-text-dim">Recovered from 5sim</span>
+            <span className="font-technical font-semibold text-ink">
+              {naira(report.refunded.recovered.costKobo)} ({report.refunded.recovered.orderCount})
+            </span>
+          </div>
+          <div className="flex items-center justify-between">
+            <span className="text-danger">Lost to 5sim</span>
+            <span className="font-technical font-semibold text-danger">
+              {naira(report.refunded.lost.costKobo)} ({report.refunded.lost.orderCount})
+            </span>
+          </div>
+          {report.refunded.unknown.orderCount > 0 && (
+            <div className="flex items-center justify-between">
+              <span className="text-text-dim">Unknown (predates tracking)</span>
+              <span className="font-technical font-semibold text-ink">
+                {naira(report.refunded.unknown.costKobo)} ({report.refunded.unknown.orderCount})
+              </span>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

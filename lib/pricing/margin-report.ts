@@ -22,6 +22,12 @@ export interface MarginOrderInput {
   upstreamCostKobo: number;
   serviceId: string;
   serviceName: string;
+  // Set by lib/orders/expire-and-refund.ts / the manual-cancel route at
+  // refund time: did the upstream 5sim cancelOrder() call actually
+  // succeed? null covers non-refunded orders and refunds written before
+  // this field existed (see the migration's backfill) or where the
+  // best-effort tracking write itself failed.
+  upstreamCancelSucceeded: boolean | null;
 }
 
 export interface MarginBucket {
@@ -36,17 +42,41 @@ export interface ServiceMarginRow extends MarginBucket {
   serviceName: string;
 }
 
+export interface RefundOutcomeBucket {
+  orderCount: number;
+  costKobo: number;
+}
+
 export interface MarginReport {
   overall: MarginBucket;
-  // 5sim isn't refunded when we refund the user (no evidence otherwise in
-  // the codebase), so this cost is a real, separate loss — not netted into
-  // `overall`, which only covers revenue we actually kept.
-  refunded: { orderCount: number; costKobo: number };
+  // 5sim isn't refunded when we refund the user unless our own cancelOrder
+  // call actually succeeded upstream — see `recovered` vs `lost` below.
+  // Neither is netted into `overall`, which only covers revenue we
+  // actually kept.
+  refunded: {
+    orderCount: number;
+    costKobo: number;
+    // cancelOrder() succeeded — this cost was actually recovered from
+    // 5sim, not a real loss despite the customer being refunded.
+    recovered: RefundOutcomeBucket;
+    // cancelOrder() was attempted and failed — this cost is a genuine,
+    // separate loss on top of the customer refund. This is the number the
+    // expire-sweep-frequency fix (see that commit) is meant to shrink.
+    lost: RefundOutcomeBucket;
+    // upstreamCancelSucceeded is null — pre-migration refund, or the
+    // best-effort tracking write itself failed. Can't tell recovered from
+    // lost for these.
+    unknown: RefundOutcomeBucket;
+  };
   byService: ServiceMarginRow[];
 }
 
 function emptyBucket(): MarginBucket {
   return { orderCount: 0, revenueKobo: 0, costKobo: 0, marginPct: 0 };
+}
+
+function emptyRefundOutcomeBucket(): RefundOutcomeBucket {
+  return { orderCount: 0, costKobo: 0 };
 }
 
 function finalizeBucket(bucket: MarginBucket): MarginBucket {
@@ -55,13 +85,28 @@ function finalizeBucket(bucket: MarginBucket): MarginBucket {
 
 export function summarizeMargin(orders: MarginOrderInput[]): MarginReport {
   const overall = emptyBucket();
-  const refunded = { orderCount: 0, costKobo: 0 };
+  const refunded = {
+    orderCount: 0,
+    costKobo: 0,
+    recovered: emptyRefundOutcomeBucket(),
+    lost: emptyRefundOutcomeBucket(),
+    unknown: emptyRefundOutcomeBucket(),
+  };
   const byServiceMap = new Map<string, ServiceMarginRow>();
 
   for (const order of orders) {
     if (REFUNDED_STATUSES.has(order.status)) {
       refunded.orderCount += 1;
       refunded.costKobo += order.upstreamCostKobo;
+
+      const outcomeBucket =
+        order.upstreamCancelSucceeded === true
+          ? refunded.recovered
+          : order.upstreamCancelSucceeded === false
+            ? refunded.lost
+            : refunded.unknown;
+      outcomeBucket.orderCount += 1;
+      outcomeBucket.costKobo += order.upstreamCostKobo;
       continue;
     }
     if (!REVENUE_KEPT_STATUSES.has(order.status)) continue; // unknown/future status — skip rather than guess

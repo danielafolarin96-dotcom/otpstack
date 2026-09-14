@@ -11,13 +11,14 @@ export default async function AdminMarginPage() {
 
   const { data: orders } = await admin
     .from("orders")
-    .select("status, price_kobo, upstream_cost_kobo, service_id, services(name)");
+    .select("status, price_kobo, upstream_cost_kobo, upstream_cancel_succeeded, service_id, services(name)");
 
   const report = summarizeMargin(
     (orders ?? []).map((o) => ({
       status: o.status,
       priceKobo: o.price_kobo,
       upstreamCostKobo: o.upstream_cost_kobo,
+      upstreamCancelSucceeded: o.upstream_cancel_succeeded,
       serviceId: o.service_id,
       serviceName: o.services?.name ?? "Unknown",
     })),

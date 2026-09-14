@@ -9,6 +9,7 @@ function order(overrides: Partial<MarginOrderInput>): MarginOrderInput {
     status: "sms_received",
     priceKobo: 100_000,
     upstreamCostKobo: 70_000,
+    upstreamCancelSucceeded: null,
     ...WHATSAPP,
     ...overrides,
   };
@@ -76,8 +77,29 @@ describe("summarizeMargin", () => {
   it("returns an empty, zeroed report for no orders", () => {
     const report = summarizeMargin([]);
     expect(report.overall).toEqual({ orderCount: 0, revenueKobo: 0, costKobo: 0, marginPct: 0 });
-    expect(report.refunded).toEqual({ orderCount: 0, costKobo: 0 });
+    expect(report.refunded).toEqual({
+      orderCount: 0,
+      costKobo: 0,
+      recovered: { orderCount: 0, costKobo: 0 },
+      lost: { orderCount: 0, costKobo: 0 },
+      unknown: { orderCount: 0, costKobo: 0 },
+    });
     expect(report.byService).toEqual([]);
+  });
+
+  it("splits refunded cost into recovered vs lost based on whether the upstream cancel succeeded", () => {
+    const report = summarizeMargin([
+      order({ status: "expired_refunded", upstreamCostKobo: 40_000, upstreamCancelSucceeded: false }), // lost — cancel failed, sweep too slow
+      order({ status: "cancelled_refunded", upstreamCostKobo: 45_000, upstreamCancelSucceeded: true }), // recovered — cancel succeeded
+      order({ status: "cancelled_refunded", upstreamCostKobo: 10_000, upstreamCancelSucceeded: true }), // recovered
+      order({ status: "expired_refunded", upstreamCostKobo: 5_000, upstreamCancelSucceeded: null }), // unknown — predates tracking
+    ]);
+
+    expect(report.refunded.orderCount).toBe(4);
+    expect(report.refunded.costKobo).toBe(100_000);
+    expect(report.refunded.recovered).toEqual({ orderCount: 2, costKobo: 55_000 });
+    expect(report.refunded.lost).toEqual({ orderCount: 1, costKobo: 40_000 });
+    expect(report.refunded.unknown).toEqual({ orderCount: 1, costKobo: 5_000 });
   });
 
   it("exposes the 30% target as a named constant matching CLAUDE.md", () => {

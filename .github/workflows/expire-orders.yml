@@ -8,16 +8,29 @@ name: Expire pending orders
 # of waiting for the dashboard's own poll-triggered fallback or the daily
 # Vercel cron sweep.
 #
+# Confirmed money-losing bug (Sept 2026, see that commit's message): while
+# this was the once-a-day Vercel cron alone, the expire sweep ran so late
+# relative to 5sim's own ~5-minute no-SMS timeout (5sim docs: "Timeout no
+# sms 5 minute") that cancelOrder() upstream almost always failed, so 5sim
+# kept the money while we still refunded the customer. This workflow
+# closes most of that gap, but GitHub Actions' scheduler has a documented
+# 5-minute floor and is NOT guaranteed to fire on time — it can slip
+# several minutes under load, which matters against a 10-minute TTL and a
+# ~5-minute upstream cancel window. Treat this as a secondary/backstop
+# trigger, not the primary one: pair it with a dedicated external pinger
+# (Upstash QStash recommended — see that commit message for why) hitting
+# the same endpoint on a tighter, more reliable schedule.
+#
 # Requires a repository secret CRON_SECRET with the exact same value as the
 # CRON_SECRET environment variable already set in the Vercel project ---
 # Settings > Secrets and variables > Actions > New repository secret.
 
 on:
   schedule:
-    # GitHub's scheduler has a documented floor of 5 minutes and can slip a
-    # few minutes further under load on the free tier --- fine here since
-    # this is a backstop, not the primary expiry path (the dashboard's own
-    # polling already resolves most orders faster than this).
+    # GitHub's documented floor is 5 minutes -- "*/1" or "*/2" are silently
+    # unsupported, so this is as tight as this trigger can go. See the
+    # comment above: a dedicated external pinger is the primary mechanism,
+    # this is the backstop.
     - cron: "*/5 * * * *"
   workflow_dispatch: {}
 

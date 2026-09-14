@@ -2,20 +2,29 @@ import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { expireAndRefundOrder } from "@/lib/orders/expire-and-refund";
 
-// Scheduled via vercel.json's crons config, per ARCHITECTURE.md's order
-// lifecycle step 5. Two things worth flagging:
+// Per ARCHITECTURE.md's order lifecycle step 5 (10-minute TTL). Auth here
+// checks `Authorization: Bearer $CRON_SECRET`, Vercel's documented pattern
+// for securing cron routes.
 //
-// 1. Auth here checks `Authorization: Bearer $CRON_SECRET`, which is
-//    Vercel's documented pattern for securing cron routes when CRON_SECRET
-//    is set as a project env var — verify this against current Vercel
-//    docs before relying on it in production; unlike the 5sim/Paystack
-//    pieces in this codebase, this wasn't built against a live example.
-// 2. This route cannot actually fire on its own schedule yet — no Vercel
-//    project is connected to this repo (checked earlier: no vercel.json,
-//    no deployment). Until it is, lib/orders/expire-and-refund.ts's other
-//    caller — the status-check route's fallback — is what actually
-//    resolves expired orders, triggered whenever a user's own dashboard
-//    happens to poll them.
+// Trigger sources, layered (all safe to overlap — expireAndRefundOrder's
+// `eq("status", "pending")` claim means only one caller ever wins a given
+// order, see that file):
+//   1. .github/workflows/expire-orders.yml — GitHub Actions, every 5
+//      minutes (its documented floor; GitHub does not guarantee exact-time
+//      firing and can run several minutes late under load). Primary sweep
+//      while this project is on Vercel's Hobby plan, which only allows a
+//      daily Vercel cron.
+//   2. vercel.json's own cron — "0 3 * * *", once a day. A 24h backstop
+//      only; was the ONLY sweep mechanism until Sept 2026, which is what
+//      let pending orders sit up to a day past expires_at before this
+//      route ever ran, well past 5sim's own order timeout — see this
+//      change's commit message and expireAndRefundOrder's comment for the
+//      resulting money-losing bug and its fix.
+//   3. The status-check route's own fallback, triggered whenever a user's
+//      dashboard happens to poll an order past its expires_at.
+// A tighter, more reliable external pinger (e.g. Upstash QStash on a
+// 2-minute schedule) is recommended over relying on GitHub Actions alone —
+// see the commit message for this change.
 export async function GET(request: Request) {
   const authHeader = request.headers.get("authorization");
   if (!process.env.CRON_SECRET || authHeader !== `Bearer ${process.env.CRON_SECRET}`) {

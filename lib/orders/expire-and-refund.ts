@@ -20,10 +20,11 @@ export interface ExpireResult {
 
 // ARCHITECTURE.md's order lifecycle step 5: a still-pending order past its
 // expires_at gets cancelled upstream and refunded. Shared by the
-// /api/cron/expire-orders sweep and the status-check route's own fallback
-// (the cron can't actually fire yet — no Vercel project connected — so a
-// user polling their own expired order is currently the only path that
-// reliably resolves it; see the cron route's comment).
+// /api/cron/expire-orders sweep (fired externally on a 1-2 minute cadence —
+// see .github/workflows/expire-orders.yml and this repo's cron notes; the
+// once-a-day Vercel cron in vercel.json is a 24h backstop only, since
+// Vercel Hobby doesn't allow a tighter schedule) and the status-check
+// route's own fallback.
 //
 // Audit fix: this used to update orders.status unconditionally, so a
 // late-arriving SMS (resolved concurrently by the status-poll route) or a
@@ -53,13 +54,33 @@ export async function expireAndRefundOrder(
     return { refunded: false };
   }
 
+  // 5sim's own docs (https://5sim.net/docs, "Buy activation number" ->
+  // Request limits: "Maximum waiting time is 15 minutes. Timeout no sms 5
+  // minute") put an activation order's no-SMS auto-timeout at ~5 minutes —
+  // shorter than our own 10-minute TTL, and confirmed empirically (Sept
+  // 2026): every cancel we observed succeeding upstream landed within ~4
+  // minutes of purchase; the one we have on record attempted at ~15
+  // minutes had already flipped to TIMEOUT upstream and failed. So a
+  // failure here is genuinely expected often, even with a fast sweep — see
+  // the money-flow note in this change's commit message.
+  let upstreamCancelSucceeded = false;
   try {
     await cancelOrder(order.fivesim_order_id);
+    upstreamCancelSucceeded = true;
   } catch (err) {
-    // Best-effort — 5sim's own 15-minute hold likely already lapsed by the
-    // time our stricter 10-minute TTL fires, so a failure here is expected
-    // more often than not. Still refund the user regardless.
     console.error(`Failed to cancel upstream 5sim order ${order.fivesim_order_id} on expiry:`, err);
+  }
+
+  // Best-effort: feeds the admin Margin page's recovered-vs-lost split
+  // (lib/pricing/margin-report.ts). Not money-critical — if this write
+  // fails, the refund below still happens; the order just won't be
+  // attributed to either bucket on the Margin page.
+  const { error: markError } = await admin
+    .from("orders")
+    .update({ upstream_cancel_succeeded: upstreamCancelSucceeded })
+    .eq("id", order.id);
+  if (markError) {
+    console.error(`Failed to record upstream_cancel_succeeded for order ${order.id}:`, markError);
   }
 
   await recordWalletTransaction(admin, {

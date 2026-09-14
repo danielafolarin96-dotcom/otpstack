@@ -141,6 +141,7 @@ export type Database = {
           price_kobo: number
           service_id: string
           status: Database["public"]["Enums"]["order_status"]
+          upstream_cancel_succeeded: boolean | null
           upstream_cost_kobo: number
           user_id: string
         }
@@ -156,6 +157,7 @@ export type Database = {
           price_kobo: number
           service_id: string
           status?: Database["public"]["Enums"]["order_status"]
+          upstream_cancel_succeeded?: boolean | null
           upstream_cost_kobo: number
           user_id: string
         }
@@ -171,6 +173,7 @@ export type Database = {
           price_kobo?: number
           service_id?: string
           status?: Database["public"]["Enums"]["order_status"]
+          upstream_cancel_succeeded?: boolean | null
           upstream_cost_kobo?: number
           user_id?: string
         }
@@ -424,6 +427,7 @@ export type Database = {
           price_kobo: number
           service_id: string
           status: Database["public"]["Enums"]["order_status"]
+          upstream_cancel_succeeded: boolean | null
           upstream_cost_kobo: number
           user_id: string
         }

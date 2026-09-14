@@ -52,13 +52,25 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     return NextResponse.json({ error: "This order was already resolved" }, { status: 409 });
   }
 
+  let upstreamCancelSucceeded = false;
   try {
     await cancelOrder(order.fivesim_order_id);
+    upstreamCancelSucceeded = true;
   } catch (err) {
     // Continue regardless — the user still gets refunded even if 5sim's
     // own cancel call fails; we're not going to keep charging them for a
     // number they no longer want.
     console.error(`Failed to cancel upstream 5sim order ${order.fivesim_order_id}:`, err);
+  }
+
+  // Best-effort — feeds the admin Margin page's recovered-vs-lost split
+  // (lib/pricing/margin-report.ts), same as lib/orders/expire-and-refund.ts.
+  const { error: markError } = await admin
+    .from("orders")
+    .update({ upstream_cancel_succeeded: upstreamCancelSucceeded })
+    .eq("id", order.id);
+  if (markError) {
+    console.error(`Failed to record upstream_cancel_succeeded for order ${order.id}:`, markError);
   }
 
   try {
