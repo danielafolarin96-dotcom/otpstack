@@ -17,10 +17,19 @@ describe("selectBestOperator", () => {
   it("picks the cheapest among operators that all clear the reliability floor", () => {
     const result = selectBestOperator({
       reliableExpensive: { cost: 0.3, count: 50, rate: 90 },
-      reliableCheaper: { cost: 0.2, count: 50, rate: 60 },
+      reliableCheaper: { cost: 0.2, count: 50, rate: 75 },
     });
 
     expect(result?.operator).toBe("reliableCheaper");
+  });
+
+  it("excludes an operator right below the 70 floor, includes one right at it", () => {
+    const result = selectBestOperator({
+      justBelowFloor: { cost: 0.1, count: 50, rate: 69 },
+      atFloor: { cost: 0.2, count: 50, rate: 70 },
+    });
+
+    expect(result?.operator).toBe("atFloor");
   });
 
   it("excludes out-of-stock operators even when they're cheapest and reliable", () => {

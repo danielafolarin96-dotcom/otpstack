@@ -14,14 +14,26 @@ const BASE_URL = "https://5sim.net/v1";
 
 // Minimum overall delivery success rate (5sim's per-operator `rate` field,
 // a percentage) an operator must clear to be picked by getProductPrices.
-// Confirmed via a real diagnostic (Sept 2026): a TikTok/USA purchase from
-// the cheapest operator (45% rate) never delivered its code, while a
-// slightly pricier operator (80% rate) on the same product/country
-// delivered cleanly on a direct test against 5sim's own site. 50 is a
-// floor, not a target — high enough to exclude operators like that 45%
-// one, low enough that most product/country pairs still have an eligible
-// operator.
-const MIN_ACCEPTABLE_DELIVERY_RATE = 50;
+// Originally 50, justified by exactly one diagnostic (Sept 2026): a
+// TikTok/USA purchase from the cheapest operator (45% rate) never
+// delivered its code, while a slightly pricier operator (80% rate) on the
+// same product/country delivered cleanly. That's a thin basis for a real
+// number, and a low floor plausibly let through operators unlikely to ever
+// deliver an SMS — timing the order out regardless of expiry-sweep speed
+// (see lib/orders/expire-and-refund.ts and that change's commit message).
+//
+// Raised to 70 (Sept 2026) as a conservative interim value given the two
+// known data points (45 failed, 80 succeeded — 70 sits closer to the
+// success side without assuming everything above 50 is actually fine).
+// orders.fivesim_operator / orders.fivesim_operator_rate (see that
+// migration) now capture the operator + rate actually used on every
+// purchase going forward specifically so this can be revisited with a real
+// sms_received-vs-expired distribution by rate bucket instead of guessed —
+// do that before moving this again. See that commit's message for the
+// full before/after catalog-impact analysis (operators excluded, cost
+// deltas, product/country combos that lose every "reliable" operator and
+// fall back to cheapest-overall) this value change was reviewed against.
+const MIN_ACCEPTABLE_DELIVERY_RATE = 70;
 
 export interface FiveSimSmsMessage {
   // Verified: `sms` is an array, empty when no code has arrived yet.
