@@ -29,11 +29,23 @@ export default async function OverviewPage() {
         .order("created_at", { ascending: false })
         .limit(5),
       fetchActiveCountries(admin),
+      // Bug fix (Sept 2026): this used to be .eq("status", "pending"), so
+      // the instant an order's SMS arrived (status -> sms_received) it
+      // stopped matching and ActiveNumberPanel's next router.refresh()
+      // (triggered by its own polling, see that component) re-rendered
+      // with no active order at all — the customer had to go to Order
+      // History to see a code that had, from their perspective, just
+      // appeared and immediately vanished. Including sms_received here
+      // keeps the delivered order showing; ActiveNumberPanel now clears it
+      // only on an explicit dismiss (persisted client-side) or once a
+      // newer order exists (this query always returns the most recent
+      // one, so a fresh purchase naturally supersedes it — no separate
+      // "clear" trigger needed for that case).
       supabase
         .from("orders")
         .select("*, services(name)")
         .eq("user_id", user.id)
-        .eq("status", "pending")
+        .in("status", ["pending", "sms_received"])
         .order("created_at", { ascending: false })
         .limit(1)
         .maybeSingle(),

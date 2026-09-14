@@ -5,6 +5,33 @@ import { useRouter } from "next/navigation";
 
 const POLL_INTERVAL_MS = 4000;
 
+// Bug fix (Sept 2026): the customer explicitly dismissing a delivered (or
+// otherwise resolved) order is the only way this card clears now — see
+// handleDismiss below and app/(dashboard)/dashboard/page.tsx's query
+// comment. Persisted in localStorage (not just component state) so a
+// dismiss survives a hard reload, not just client-side navigation —
+// keyed by order id, so a genuinely new order (a fresh purchase) is never
+// affected by a previous order's dismissal.
+const DISMISSED_ORDER_STORAGE_KEY = "otpstack:dismissed-active-order-id";
+
+function readDismissedOrderId(): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    return window.localStorage.getItem(DISMISSED_ORDER_STORAGE_KEY);
+  } catch {
+    return null; // localStorage unavailable (e.g. private browsing) — never treat as dismissed
+  }
+}
+
+function writeDismissedOrderId(orderId: string) {
+  try {
+    window.localStorage.setItem(DISMISSED_ORDER_STORAGE_KEY, orderId);
+  } catch {
+    // Dismiss still works for this component instance via state — it just
+    // won't survive a hard reload if storage isn't available.
+  }
+}
+
 export interface ActiveOrder {
   id: string;
   status: string;
@@ -12,6 +39,23 @@ export interface ActiveOrder {
   otpCode: string | null;
   expiresAt: string;
   serviceName: string;
+}
+
+// Pure decision extracted out of the component so it's testable without a
+// DOM-rendering library (none is set up in this repo — see
+// active-number-panel.test.ts). This is the crux of the bug fix: a
+// delivered (sms_received) order must keep resolving to itself here
+// rather than being excluded, which is what let it "revert to No active
+// number" the instant SMS arrived. A pending order is never dismissible
+// (there's nothing to dismiss yet — cancel-for-refund is the action for
+// that state), so a stale dismissed-id never hides one.
+export function resolveVisibleOrder(
+  order: ActiveOrder | null,
+  dismissedOrderId: string | null,
+): ActiveOrder | null {
+  if (!order) return null;
+  if (order.status !== "pending" && order.id === dismissedOrderId) return null;
+  return order;
 }
 
 function formatCountdown(msRemaining: number) {
@@ -24,10 +68,29 @@ function formatCountdown(msRemaining: number) {
 
 export function ActiveNumberPanel({ order: initialOrder }: { order: ActiveOrder | null }) {
   const router = useRouter();
-  const [order, setOrder] = useState(initialOrder);
+  const [order, setOrder] = useState(() => resolveVisibleOrder(initialOrder, readDismissedOrderId()));
   const [now, setNow] = useState(() => Date.now());
   const [cancelling, setCancelling] = useState(false);
+  const [copied, setCopied] = useState(false);
   const pollTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  function handleDismiss() {
+    if (!order) return;
+    writeDismissedOrderId(order.id);
+    setOrder(null);
+  }
+
+  async function handleCopyCode() {
+    if (!order?.otpCode) return;
+    try {
+      await navigator.clipboard.writeText(order.otpCode);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // Clipboard permission denied or unavailable — the code is still
+      // shown on screen, so this is a nice-to-have, not a hard failure.
+    }
+  }
 
   // Tick every second for the countdown display.
   useEffect(() => {
@@ -108,7 +171,16 @@ export function ActiveNumberPanel({ order: initialOrder }: { order: ActiveOrder 
       <p className="mt-2 font-technical text-xl text-ink">{order.phoneNumber}</p>
 
       {order.status === "sms_received" && order.otpCode && (
-        <p className="mt-3 font-technical text-2xl font-bold text-good">{order.otpCode}</p>
+        <div className="mt-3 flex items-center gap-3">
+          <p className="font-technical text-2xl font-bold text-good">{order.otpCode}</p>
+          <button
+            type="button"
+            onClick={handleCopyCode}
+            className="rounded-[8px] border border-line px-2.5 py-1 text-xs font-medium text-text-dim transition-colors hover:border-signal hover:text-text"
+          >
+            {copied ? "Copied" : "Copy"}
+          </button>
+        </div>
       )}
       {order.status === "expired_refunded" && (
         <p className="mt-3 text-sm text-danger">No code arrived in time — refunded to your wallet.</p>
@@ -128,6 +200,16 @@ export function ActiveNumberPanel({ order: initialOrder }: { order: ActiveOrder 
           className="mt-3 text-sm font-medium text-danger hover:underline disabled:opacity-60"
         >
           {cancelling ? "Cancelling…" : "Cancel for refund"}
+        </button>
+      )}
+
+      {order.status !== "pending" && (
+        <button
+          type="button"
+          onClick={handleDismiss}
+          className="mt-3 text-sm font-medium text-text-dim hover:text-text hover:underline"
+        >
+          Dismiss
         </button>
       )}
     </div>
