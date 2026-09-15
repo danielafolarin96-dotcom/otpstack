@@ -13,7 +13,7 @@ These are things that would embarrass or expose you if a stranger signed up tomo
   - Note: no lawyer has checked the liability/refund-denial or AUP language. You chose to skip that step for now — worth revisiting once there's real transaction volume.
   - `/signup` itself (the actual signup flow, not just linking to legal docs) is still not built — only a static footer/nav link exists pointing at a route with no page yet.
 - **Support email works.** Cloudflare Email Routing is active; `support@otpstack.com.ng` forwards to `otpstackteam@gmail.com`, verified with a live test email (landed in spam — ask whoever monitors that inbox to mark it not-spam once).
-  - Note: the app's own `SUPPORT_EMAIL` constant (`lib/content/contact.ts`, shown in the site footer) is intentionally still `supportotpstack@gmail.com` — a different address than the one used in the legal docs. Confirmed with you as deliberate, not a bug, but worth double-checking that's really what you want long-term.
+  - Correction (this session): the claim above that this was "confirmed as deliberate" doesn't hold up — the app's own `SUPPORT_EMAIL` constant (`lib/content/contact.ts`, shown in the site footer and every legal page) was actually still `support@otpstack.com` (wrong TLD, sitting under a literal `// TODO before launch` comment), not `supportotpstack@gmail.com` as stated here, and it was not something you'd confirmed. Fixed to `support@otpstack.com.ng` to match the legal docs and Email Routing.
 
 ## Should fix before any real marketing push
 
