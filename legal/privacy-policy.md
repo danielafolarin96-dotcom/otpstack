@@ -6,7 +6,7 @@ This Privacy Policy explains what personal data OtpStack collects, why, and what
 
 ## 1. What we collect
 
-**Account data:** full name, username, email address, and authentication credentials (handled by Supabase Auth — we never see or store your password in plain text). If you sign in with Google, we receive the profile information Google shares with us for that purpose.
+**Account data:** full name, username, email address, and authentication credentials (handled by Supabase Auth — we never see or store your password in plain text).
 
 **Wallet and transaction data:** your wallet balance and the full history of top-ups, purchases, and refunds, including amounts and timestamps. We do not collect or store your card or bank details — Paystack's hosted checkout handles all payment data directly, and we only receive a transaction reference and status.
 

@@ -19,7 +19,7 @@
 - Purchase, status polling, and cancellation happen through our own API routes, which enforce ownership (a user can only check/cancel their own order) and rate limits.
 
 ## Auth & access
-- Supabase Auth (email/password + Google OAuth). Session cookies are httpOnly, secure, SameSite=Lax.
+- Supabase Auth (email/password). Session cookies are httpOnly, secure, SameSite=Lax.
 - Row Level Security enabled on every table holding user data — a user's Postgres role can only read/write rows where `user_id = auth.uid()`. Admin routes use the service role key server-side only, gated by an `is_admin` check on the authenticated user, never by a client-supplied flag.
 - No email verification required at signup (product decision) — compensated by rate limiting on signup/top-up endpoints and monitoring for abuse patterns (many accounts, same card/device fingerprint) as an ongoing concern.
 

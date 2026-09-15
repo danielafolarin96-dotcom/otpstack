@@ -9,7 +9,7 @@ Phased so each stage produces something testable. No fixed dates — sequence an
 - Set up Tailwind with the DESIGN.md token set (light + dark).
 
 ## Phase 1 — Auth & user shell
-- Supabase Auth: email/password + Google OAuth; signup form (full name, email, username, password, confirm, ToS/Privacy checkbox) — no email verification gate.
+- Supabase Auth: email/password; signup form (full name, email, username, password, confirm, ToS/Privacy checkbox) — no email verification gate.
 - `users` + `wallets` tables + RLS policies.
 - Basic dashboard shell (sidebar nav, empty states) matching the mockup.
 
