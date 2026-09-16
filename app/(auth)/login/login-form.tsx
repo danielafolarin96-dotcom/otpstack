@@ -4,8 +4,10 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 
+// text-base below sm:, not text-sm alone: iOS Safari auto-zooms the page
+// on focus of any input under 16px computed font-size.
 const inputClass =
-  "w-full rounded-[10px] border border-line bg-paper px-3.5 py-2.5 text-sm text-text placeholder:text-slate-dim focus:border-signal focus:outline-none focus:ring-1 focus:ring-signal";
+  "w-full rounded-[10px] border border-line bg-paper px-3.5 py-2.5 text-base text-text placeholder:text-slate-dim focus:border-signal focus:outline-none focus:ring-1 focus:ring-signal sm:text-sm";
 
 export function LoginForm() {
   const router = useRouter();
