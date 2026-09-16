@@ -131,7 +131,11 @@ export function ServiceCatalogGrid({
         value={query}
         onChange={(e) => setQuery(e.target.value)}
         placeholder="Search services…"
-        className="w-full rounded-[10px] border border-line bg-paper px-3.5 py-2.5 text-sm text-text placeholder:text-slate-dim focus:border-signal focus:outline-none focus:ring-1 focus:ring-signal sm:max-w-xs"
+        // text-base below sm: to avoid iOS Safari's auto-zoom-on-focus for
+        // sub-16px inputs — see the country search input in
+        // country-select.tsx for the full explanation; same input, same
+        // page, same root cause.
+        className="w-full rounded-[10px] border border-line bg-paper px-3.5 py-2.5 text-base text-text placeholder:text-slate-dim focus:border-signal focus:outline-none focus:ring-1 focus:ring-signal sm:max-w-xs sm:text-sm"
       />
 
       <div className="flex flex-wrap gap-2">

@@ -109,7 +109,21 @@ export function CountrySelect({
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search countries…"
-            className="mb-2 w-full rounded-[10px] border border-line bg-paper px-3.5 py-2 text-sm text-text placeholder:text-slate-dim focus:border-signal focus:outline-none focus:ring-1 focus:ring-signal"
+            // text-base (16px) below sm:, not text-sm (14px): iOS Safari
+            // auto-zooms the whole page in on focus of any input whose
+            // computed font-size is under 16px, since our viewport meta
+            // (width=device-width, initial-scale=1) doesn't set
+            // maximum-scale to suppress it — that's deliberate, disabling
+            // pinch-zoom site-wide would be an accessibility regression.
+            // That zoom is what made the page look like it "expands" past
+            // the device width on mobile, and, mid-zoom-animation, threw
+            // off the tap coordinates for the dropdown list items below,
+            // so a tap that should hit a partial match could miss — by
+            // the time a full name was typed the zoom had settled and the
+            // tap landed. Filtering itself was already instant substring
+            // matching (see the includes() below); this is what actually
+            // made it look broken on a real phone.
+            className="mb-2 w-full rounded-[10px] border border-line bg-paper px-3.5 py-2 text-base text-text placeholder:text-slate-dim focus:border-signal focus:outline-none focus:ring-1 focus:ring-signal sm:text-sm"
           />
           <div className="max-h-64 overflow-y-auto">
             {filtered.length === 0 ? (
