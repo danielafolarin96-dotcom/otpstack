@@ -42,7 +42,9 @@ export function AuditLogFilters({
           id="action-filter"
           value={selected.action ?? ""}
           onChange={(e) => setParam("action", e.target.value)}
-          className="rounded-[10px] border border-line bg-paper-raised px-3.5 py-2.5 text-sm text-text focus:border-signal focus:outline-none focus:ring-1 focus:ring-signal"
+          // text-base below sm:, not text-sm alone: iOS Safari auto-zooms
+          // the page on focus of any input under 16px computed font-size.
+          className="rounded-[10px] border border-line bg-paper-raised px-3.5 py-2.5 text-base text-text focus:border-signal focus:outline-none focus:ring-1 focus:ring-signal sm:text-sm"
         >
           <option value="">All actions</option>
           {actions.map((a) => (
@@ -70,7 +72,9 @@ export function AuditLogFilters({
             value={adminQuery}
             onChange={(e) => setAdminQuery(e.target.value)}
             placeholder="e.g. jane or jane@example.com"
-            className="w-56 rounded-[10px] border border-line bg-paper-raised px-3.5 py-2.5 text-sm text-text focus:border-signal focus:outline-none focus:ring-1 focus:ring-signal"
+            // text-base below sm:, not text-sm alone: iOS Safari auto-zooms
+            // the page on focus of any input under 16px computed font-size.
+            className="w-56 rounded-[10px] border border-line bg-paper-raised px-3.5 py-2.5 text-base text-text focus:border-signal focus:outline-none focus:ring-1 focus:ring-signal sm:text-sm"
           />
           <button
             type="submit"

@@ -49,7 +49,9 @@ export function OrdersFilters({
           id="status-filter"
           value={selected.status ?? ""}
           onChange={(e) => setParam("status", e.target.value)}
-          className="rounded-[10px] border border-line bg-paper-raised px-3.5 py-2.5 text-sm text-text focus:border-signal focus:outline-none focus:ring-1 focus:ring-signal"
+          // text-base below sm:, not text-sm alone: iOS Safari auto-zooms
+          // the page on focus of any input under 16px computed font-size.
+          className="rounded-[10px] border border-line bg-paper-raised px-3.5 py-2.5 text-base text-text focus:border-signal focus:outline-none focus:ring-1 focus:ring-signal sm:text-sm"
         >
           <option value="">All statuses</option>
           {statuses.map((s) => (
@@ -68,7 +70,9 @@ export function OrdersFilters({
           id="service-filter"
           value={selected.serviceId ?? ""}
           onChange={(e) => setParam("service", e.target.value)}
-          className="rounded-[10px] border border-line bg-paper-raised px-3.5 py-2.5 text-sm text-text focus:border-signal focus:outline-none focus:ring-1 focus:ring-signal"
+          // text-base below sm:, not text-sm alone: iOS Safari auto-zooms
+          // the page on focus of any input under 16px computed font-size.
+          className="rounded-[10px] border border-line bg-paper-raised px-3.5 py-2.5 text-base text-text focus:border-signal focus:outline-none focus:ring-1 focus:ring-signal sm:text-sm"
         >
           <option value="">All services</option>
           {services.map((s) => (
@@ -96,7 +100,9 @@ export function OrdersFilters({
             value={userQuery}
             onChange={(e) => setUserQuery(e.target.value)}
             placeholder="e.g. jane or jane@example.com"
-            className="w-56 rounded-[10px] border border-line bg-paper-raised px-3.5 py-2.5 text-sm text-text focus:border-signal focus:outline-none focus:ring-1 focus:ring-signal"
+            // text-base below sm:, not text-sm alone: iOS Safari auto-zooms
+            // the page on focus of any input under 16px computed font-size.
+            className="w-56 rounded-[10px] border border-line bg-paper-raised px-3.5 py-2.5 text-base text-text focus:border-signal focus:outline-none focus:ring-1 focus:ring-signal sm:text-sm"
           />
           <button
             type="submit"
