@@ -12,7 +12,7 @@ This file is auto-loaded by Claude Code at the start of every session in this re
 ## Quick facts
 - Stack: Next.js (App Router, TypeScript) + Supabase (Postgres/Auth) + Paystack (funding) + 5sim.net (number inventory) + Vercel (hosting).
 - All money is integer kobo. Wallet balance is never written directly — always through the `wallet_transactions` ledger.
-- Target gross margin: 30%, enforced as a floor in the pricing engine (see ARCHITECTURE.md).
+- Minimum-margin floor: 30%, enforced as a hard floor in the pricing engine (see ARCHITECTURE.md). The current standing markup target for the default pricing cascade is higher than that floor — 80.83% markup, ~44.7% realized margin — with WhatsApp/USA, WhatsApp/Australia, and TikTok/UK excluded from it (see ARCHITECTURE.md's "Pricing engine" section).
 - No email verification at signup; ₦500 minimum wallet top-up; 10-minute number hold with auto-refund on timeout.
 
 If anything in these docs seems to conflict with a new instruction from the user, point out the conflict rather than silently overriding the spec.
