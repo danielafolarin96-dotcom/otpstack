@@ -6,7 +6,15 @@ import { marginPct } from "./calculate";
 // computed moments earlier (see lib/orders/purchase.ts), so the 30% floor
 // enforced at quote time doesn't guarantee 30% is what actually lands. This
 // is what actually did land.
-export const TARGET_MARGIN_PCT = 30; // CLAUDE.md's "Target gross margin"
+// The 44.7% standing markup target (80.83% markup -- see
+// scripts/apply-margin-reprice.mjs and ARCHITECTURE.md's Pricing engine
+// section), not the 30% min_margin_pct floor it can still fall back to --
+// this page reports against what pricing is actually supposed to achieve,
+// not the fallback minimum. WhatsApp/USA, WhatsApp/Australia, and
+// TikTok/UK are excluded from that target and still governed by their own
+// flat_kobo overrides + the 30% floor, so their rows will legitimately
+// show lower without it meaning anything is wrong.
+export const TARGET_MARGIN_PCT = 44.7;
 
 // expired_refunded/cancelled_refunded give the user their price_kobo back
 // (see the expire-and-refund and cancel routes) — that revenue isn't ours

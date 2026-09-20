@@ -103,8 +103,8 @@ describe("summarizeMargin", () => {
     expect(report.refunded.unknown).toEqual({ orderCount: 1, costKobo: 5_000 });
   });
 
-  it("exposes the 30% target as a named constant matching CLAUDE.md", () => {
-    expect(TARGET_MARGIN_PCT).toBe(30);
+  it("exposes the 44.7% standing markup target as a named constant, not the 30% floor", () => {
+    expect(TARGET_MARGIN_PCT).toBe(44.7);
   });
 
   describe("sinceEpochAt (reporting-epoch feature)", () => {
