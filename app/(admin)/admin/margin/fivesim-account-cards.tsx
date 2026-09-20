@@ -43,8 +43,6 @@ export function FiveSimAccountCards({
   const totalOrders = report.overall.orderCount + report.refunded.orderCount;
   const avgCostPerOrderKobo = totalOrders > 0 ? totalSpentKobo / totalOrders : null;
 
-  const realizedProfitKobo = report.overall.revenueKobo - report.overall.costKobo - report.refunded.costKobo;
-
   const balanceKobo =
     profile && ngnRate !== null ? convertToNgnKobo(profile.balance, ngnRate) : null;
 
@@ -57,7 +55,7 @@ export function FiveSimAccountCards({
     estimatedOrdersRemaining !== null && estimatedOrdersRemaining < LOW_RUNWAY_ORDER_THRESHOLD;
 
   return (
-    <div className="grid gap-6 sm:grid-cols-2">
+    <>
       {profileError ? (
         <div className="rounded-[14px] border border-danger bg-danger/5 p-6">
           <p className="text-sm text-text-dim">5sim balance</p>
@@ -96,14 +94,6 @@ export function FiveSimAccountCards({
           )}
         </div>
       )}
-
-      <div className="rounded-[14px] border border-line bg-paper-raised p-6">
-        <p className="text-sm text-text-dim">Realized profit</p>
-        <p className="mt-2 font-technical text-3xl font-bold text-ink">{naira(realizedProfitKobo)}</p>
-        <p className="mt-1 text-xs text-text-dim">
-          {naira(totalSpentKobo)} paid to 5sim across {totalOrders} order{totalOrders === 1 ? "" : "s"}
-        </p>
-      </div>
-    </div>
+    </>
   );
 }

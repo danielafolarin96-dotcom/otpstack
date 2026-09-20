@@ -27,6 +27,7 @@ describe("summarizeMargin", () => {
     expect(report.overall.revenueKobo).toBe(150_000);
     expect(report.overall.costKobo).toBe(110_000);
     expect(report.overall.marginPct).toBeCloseTo(((150_000 - 110_000) / 150_000) * 100, 5);
+    expect(report.realizedProfitKobo).toBe(40_000);
   });
 
   it("excludes refunded orders from overall revenue/cost, tracking their cost separately", () => {
@@ -42,6 +43,11 @@ describe("summarizeMargin", () => {
 
     expect(report.refunded.orderCount).toBe(2);
     expect(report.refunded.costKobo).toBe(85_000);
+
+    // 5sim isn't refunded when we refund a customer, so refunded cost is a
+    // real loss on top of the revenue-kept profit — realizedProfitKobo
+    // must subtract it, not just report.overall's own margin.
+    expect(report.realizedProfitKobo).toBe(100_000 - 70_000 - 85_000);
   });
 
   it("counts a banned order as revenue-kept (no automatic refund, per ARCHITECTURE.md)", () => {
@@ -73,6 +79,7 @@ describe("summarizeMargin", () => {
     expect(report.byService[0].orderCount).toBe(2);
     expect(report.byService[0].revenueKobo).toBe(300_000);
     expect(report.byService[0].costKobo).toBe(210_000);
+    expect(report.byService[0].profitKobo).toBe(90_000);
   });
 
   it("returns an empty, zeroed report for no orders", () => {
@@ -86,6 +93,7 @@ describe("summarizeMargin", () => {
       unknown: { orderCount: 0, costKobo: 0 },
     });
     expect(report.byService).toEqual([]);
+    expect(report.realizedProfitKobo).toBe(0);
   });
 
   it("splits refunded cost into recovered vs lost based on whether the upstream cancel succeeded", () => {

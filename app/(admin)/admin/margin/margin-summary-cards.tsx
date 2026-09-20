@@ -4,27 +4,12 @@ function naira(kobo: number) {
   return `₦${(kobo / 100).toLocaleString("en-NG", { minimumFractionDigits: 2 })}`;
 }
 
-export function MarginSummaryCards({ report, target }: { report: MarginReport; target: number }) {
-  const onTarget = report.overall.orderCount === 0 || report.overall.marginPct >= target;
-
+// Supporting detail cards, demoted below the profit headline and
+// by-service table (see ProfitHeadline). Returns bare cards, not its own
+// grid, so the page can lay them out alongside FiveSimAccountCards.
+export function MarginSummaryCards({ report }: { report: MarginReport }) {
   return (
-    <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
-      <div
-        className={`rounded-[14px] border p-6 ${
-          onTarget ? "border-line bg-paper-raised" : "border-danger bg-danger/5"
-        }`}
-      >
-        <p className="text-sm text-text-dim">Realized margin</p>
-        <p className={`mt-2 font-technical text-3xl font-bold ${onTarget ? "text-ink" : "text-danger"}`}>
-          {report.overall.orderCount === 0 ? "—" : `${report.overall.marginPct.toFixed(1)}%`}
-        </p>
-        <p className="mt-1 text-xs text-text-dim">
-          {report.overall.orderCount === 0
-            ? "No revenue-kept orders yet"
-            : `Target: ${target}%${onTarget ? "" : " — below target"}`}
-        </p>
-      </div>
-
+    <>
       <div className="rounded-[14px] border border-line bg-paper-raised p-6">
         <p className="text-sm text-text-dim">Revenue kept</p>
         <p className="mt-2 font-technical text-3xl font-bold text-ink">
@@ -69,6 +54,6 @@ export function MarginSummaryCards({ report, target }: { report: MarginReport; t
           )}
         </div>
       </div>
-    </div>
+    </>
   );
 }

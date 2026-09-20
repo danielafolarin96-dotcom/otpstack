@@ -6,7 +6,7 @@ import { fetchCurrentReportingEpoch } from "@/lib/pricing/reporting-epoch";
 import { MarginSummaryCards } from "./margin-summary-cards";
 import { MarginByServiceTable } from "./margin-by-service-table";
 import { FiveSimAccountCards } from "./fivesim-account-cards";
-import { ReportingEpochBanner } from "./reporting-epoch-banner";
+import { ProfitHeadline } from "./profit-headline";
 
 export default async function AdminMarginPage({
   searchParams,
@@ -74,21 +74,25 @@ export default async function AdminMarginPage({
     <div className="flex flex-col gap-6">
       <h1 className="font-display text-2xl font-bold text-ink">Margin</h1>
 
-      <ReportingEpochBanner epoch={epoch} showAllTime={showAllTime} />
-
-      <MarginSummaryCards report={report} target={TARGET_MARGIN_PCT} />
-
-      <FiveSimAccountCards
-        profile={profile}
-        profileError={profileError}
-        ngnRate={ngnRate}
-        report={report}
-        epochStartBalanceUsd={epoch && !showAllTime ? epoch.fivesimBalanceUsd : null}
-      />
+      <ProfitHeadline report={report} target={TARGET_MARGIN_PCT} epoch={epoch} showAllTime={showAllTime} />
 
       <div>
         <h2 className="mb-3 font-display text-lg font-bold text-ink">By service</h2>
         <MarginByServiceTable rows={report.byService} target={TARGET_MARGIN_PCT} />
+      </div>
+
+      <div>
+        <h2 className="mb-3 font-display text-lg font-bold text-ink">Detail</h2>
+        <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
+          <MarginSummaryCards report={report} />
+          <FiveSimAccountCards
+            profile={profile}
+            profileError={profileError}
+            ngnRate={ngnRate}
+            report={report}
+            epochStartBalanceUsd={epoch && !showAllTime ? epoch.fivesimBalanceUsd : null}
+          />
+        </div>
       </div>
     </div>
   );

@@ -62,6 +62,9 @@ export interface MarginBucket {
 export interface ServiceMarginRow extends MarginBucket {
   serviceId: string;
   serviceName: string;
+  // Revenue minus cost for this service, in kobo — the actual naira
+  // contribution, not just the margin percentage.
+  profitKobo: number;
 }
 
 export interface RefundOutcomeBucket {
@@ -91,6 +94,11 @@ export interface MarginReport {
     unknown: RefundOutcomeBucket;
   };
   byService: ServiceMarginRow[];
+  // The actual naira bottom line: revenue kept minus upstream cost minus
+  // refund cost (5sim doesn't refund us when we refund a customer, so that
+  // cost is a real loss — see `refunded` above). This is the admin page's
+  // headline number.
+  realizedProfitKobo: number;
 }
 
 function emptyBucket(): MarginBucket {
@@ -144,6 +152,7 @@ export function summarizeMargin(orders: MarginOrderInput[], options: SummarizeMa
     const existing = byServiceMap.get(order.serviceId) ?? {
       serviceId: order.serviceId,
       serviceName: order.serviceName,
+      profitKobo: 0,
       ...emptyBucket(),
     };
     existing.orderCount += 1;
@@ -153,10 +162,16 @@ export function summarizeMargin(orders: MarginOrderInput[], options: SummarizeMa
   }
 
   const byService = Array.from(byServiceMap.values())
-    .map((row) => ({ ...row, marginPct: marginPct(row.revenueKobo, row.costKobo) }))
+    .map((row) => ({
+      ...row,
+      marginPct: marginPct(row.revenueKobo, row.costKobo),
+      profitKobo: row.revenueKobo - row.costKobo,
+    }))
     // Worst margin first — that's what needs attention for "tune
     // pricing_rules accordingly" (DEVELOPMENT_PLAN.md's Phase 9).
     .sort((a, b) => a.marginPct - b.marginPct);
 
-  return { overall: finalizeBucket(overall), refunded, byService };
+  const realizedProfitKobo = overall.revenueKobo - overall.costKobo - refunded.costKobo;
+
+  return { overall: finalizeBucket(overall), refunded, byService, realizedProfitKobo };
 }

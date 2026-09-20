@@ -25,6 +25,7 @@ export function MarginByServiceTable({ rows, target }: { rows: ServiceMarginRow[
             <th className="px-4 py-3 font-medium">Orders</th>
             <th className="px-4 py-3 font-medium">Revenue</th>
             <th className="px-4 py-3 font-medium">Cost</th>
+            <th className="px-4 py-3 font-medium">Profit</th>
             <th className="px-4 py-3 font-medium">Margin</th>
           </tr>
         </thead>
@@ -37,6 +38,13 @@ export function MarginByServiceTable({ rows, target }: { rows: ServiceMarginRow[
                 <td className="px-4 py-3 text-text-dim">{row.orderCount}</td>
                 <td className="px-4 py-3 font-technical">{naira(row.revenueKobo)}</td>
                 <td className="px-4 py-3 font-technical text-text-dim">{naira(row.costKobo)}</td>
+                <td
+                  className={`px-4 py-3 font-technical font-medium ${
+                    row.profitKobo >= 0 ? "text-good" : "text-danger"
+                  }`}
+                >
+                  {naira(row.profitKobo)}
+                </td>
                 <td className="px-4 py-3">
                   <span
                     className={`rounded-full px-2.5 py-1 font-technical text-xs font-medium ${
