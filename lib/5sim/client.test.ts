@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { buyActivation, customerFacingPurchaseErrorMessage, FiveSimError, selectBestOperator } from "./client";
+import {
+  buyActivation,
+  customerFacingPurchaseErrorMessage,
+  FiveSimError,
+  getProductPrices,
+  selectBestOperator,
+} from "./client";
 
 describe("selectBestOperator", () => {
   it("picks the reliable operator over a cheaper one below the delivery-rate floor", () => {
@@ -67,6 +73,64 @@ describe("selectBestOperator", () => {
     });
 
     expect(result).toBeNull();
+  });
+});
+
+describe("getProductPrices — operator denylist", () => {
+  const originalFetch = global.fetch;
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+  });
+
+  it("never picks virtual8 for usa/whatsapp even though it's cheapest and in stock", async () => {
+    // Real scenario (Sept 2026): virtual8 was cheapest ($0.85) and had
+    // 7,594+ in stock, but 3 consecutive live orders on it all failed to
+    // deliver an SMS (0% observed rate) — see OPERATOR_DENYLIST's comment
+    // in client.ts. Without the denylist, selectBestOperator's own
+    // fallback (every operator below the 70 floor -> cheapest in-stock)
+    // would keep picking it right back up.
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: () =>
+        Promise.resolve(
+          JSON.stringify({
+            usa: {
+              whatsapp: {
+                virtual8: { cost: 0.85, count: 7594, rate: 0 },
+                virtual28: { cost: 1.9231, count: 29000, rate: 17.79 },
+                virtual63: { cost: 1.92, count: 0, rate: 47.62 },
+              },
+            },
+          }),
+        ),
+    } as Response);
+
+    const prices = await getProductPrices("usa");
+
+    expect(prices.whatsapp?.operator).toBe("virtual28");
+  });
+
+  it("leaves virtual8 selectable for a different country/product it isn't denylisted for", async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: () =>
+        Promise.resolve(
+          JSON.stringify({
+            england: {
+              whatsapp: {
+                virtual8: { cost: 0.5, count: 100, rate: 0 },
+              },
+            },
+          }),
+        ),
+    } as Response);
+
+    const prices = await getProductPrices("england");
+
+    expect(prices.whatsapp?.operator).toBe("virtual8");
   });
 });
 
