@@ -38,15 +38,13 @@ export function MarginSummaryCards({ report, target }: { report: MarginReport; t
         <p className="mt-2 font-technical text-3xl font-bold text-ink">
           {naira(report.overall.costKobo)}
         </p>
-        <p className="mt-1 text-xs text-text-dim">On those same orders</p>
       </div>
 
       <div className="rounded-[14px] border border-line bg-paper-raised p-6">
         <p className="text-sm text-text-dim">Refund cost</p>
         <p className="mt-2 font-technical text-3xl font-bold text-ink">{naira(report.refunded.costKobo)}</p>
         <p className="mt-1 text-xs text-text-dim">
-          {report.refunded.orderCount} refunded order{report.refunded.orderCount === 1 ? "" : "s"} — not
-          netted above
+          {report.refunded.orderCount} refunded order{report.refunded.orderCount === 1 ? "" : "s"}
         </p>
         <div className="mt-3 flex flex-col gap-1 border-t border-line pt-3 text-xs">
           <div className="flex items-center justify-between">

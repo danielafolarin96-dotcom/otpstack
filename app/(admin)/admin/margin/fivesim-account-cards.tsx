@@ -91,7 +91,7 @@ export function FiveSimAccountCards({
           )}
           {epochStartBalanceUsd !== null && (
             <p className={`mt-1 text-xs ${lowRunway ? "text-danger" : "text-paper/70"}`}>
-              Started this reporting period at ${epochStartBalanceUsd.toLocaleString("en-US", { minimumFractionDigits: 2 })}
+              Baseline: ${epochStartBalanceUsd.toLocaleString("en-US", { minimumFractionDigits: 2 })}
             </p>
           )}
         </div>
@@ -101,8 +101,7 @@ export function FiveSimAccountCards({
         <p className="text-sm text-text-dim">Realized profit</p>
         <p className="mt-2 font-technical text-3xl font-bold text-ink">{naira(realizedProfitKobo)}</p>
         <p className="mt-1 text-xs text-text-dim">
-          Revenue kept minus upstream cost minus refund cost ({naira(totalSpentKobo)} paid to 5sim in
-          total across {totalOrders} order{totalOrders === 1 ? "" : "s"})
+          {naira(totalSpentKobo)} paid to 5sim across {totalOrders} order{totalOrders === 1 ? "" : "s"}
         </p>
       </div>
     </div>

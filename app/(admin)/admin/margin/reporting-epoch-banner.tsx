@@ -18,7 +18,7 @@ export function ReportingEpochBanner({
   if (!epoch) {
     return (
       <div className="rounded-[14px] border border-line bg-paper-raised px-4 py-3 text-sm text-text-dim">
-        No reporting epoch set — showing all-time data.
+        All-time — no reporting epoch set.
       </div>
     );
   }
@@ -27,15 +27,10 @@ export function ReportingEpochBanner({
     <div className="flex flex-wrap items-center justify-between gap-3 rounded-[14px] border border-line bg-paper-raised px-4 py-3">
       <p className="text-sm text-text-dim">
         {showAllTime ? (
-          <>
-            Showing <span className="font-medium text-ink">all-time</span> data, including orders from before the
-            expiry-sweep and reliability-floor fixes shipped.
-          </>
+          "All-time"
         ) : (
           <>
-            Showing orders since <span className="font-medium text-ink">{formatDate(epoch.setAt)}</span> — when the
-            expiry-sweep and operator-reliability fixes shipped. Older orders are still recorded, just not counted
-            here by default.
+            Since <span className="font-medium text-ink">{formatDate(epoch.setAt)}</span>
           </>
         )}
       </p>

@@ -1,0 +1,14 @@
+-- Resets the Margin page's default reporting baseline to "now," per user
+-- request (2026-09-20). Append-only insert into reporting_epochs (see
+-- 20260914140000_create_reporting_epochs.sql) — reading "the current
+-- epoch" always means the latest row by set_at, so this simply becomes
+-- the new default cutoff without touching the prior row, or any row in
+-- orders/wallet_transactions. All-time (?view=all-time) still reaches
+-- every historical order unfiltered.
+--
+-- fivesim_balance_usd is the live 5sim account balance (GET /user/profile,
+-- same call getProfile() makes) at the moment this was written: $10.021,
+-- confirmed against the fx_rates cron's most recent USD_NGN rate
+-- (1335.694724, fetched 2026-09-20T04:05:24Z) which converts to the
+-- ~₦13,385 figure the user cited.
+insert into public.reporting_epochs (fivesim_balance_usd) values (10.021);
