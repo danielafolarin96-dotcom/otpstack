@@ -76,20 +76,20 @@ describe("selectBestOperator", () => {
   });
 });
 
-describe("getProductPrices — operator denylist", () => {
+describe("getProductPrices — usa/whatsapp scoped rate floor", () => {
   const originalFetch = global.fetch;
 
   afterEach(() => {
     global.fetch = originalFetch;
   });
 
-  it("never picks virtual8 for usa/whatsapp even though it's cheapest and in stock", async () => {
+  it("excludes virtual8 when its live rate is below the 30 floor, even though it's cheapest and in stock", async () => {
     // Real scenario (Sept 2026): virtual8 was cheapest ($0.85) and had
-    // 7,594+ in stock, but 3 consecutive live orders on it all failed to
-    // deliver an SMS (0% observed rate) — see OPERATOR_DENYLIST's comment
-    // in client.ts. Without the denylist, selectBestOperator's own
-    // fallback (every operator below the 70 floor -> cheapest in-stock)
-    // would keep picking it right back up.
+    // thousands in stock, but its live 5sim rate sat at ~0-1% and 3
+    // consecutive orders on it all failed to deliver an SMS — see
+    // ROUTE_RATE_FLOORS' comment in client.ts. This is the rate-based
+    // successor to a name-based denylist: it re-checks the live rate on
+    // every call rather than banning "virtual8" by name.
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
@@ -98,9 +98,8 @@ describe("getProductPrices — operator denylist", () => {
           JSON.stringify({
             usa: {
               whatsapp: {
-                virtual8: { cost: 0.85, count: 7594, rate: 0 },
-                virtual28: { cost: 1.9231, count: 29000, rate: 17.79 },
-                virtual63: { cost: 1.92, count: 0, rate: 47.62 },
+                virtual8: { cost: 0.85, count: 7136, rate: 0.28 },
+                virtual28: { cost: 1.9231, count: 28871, rate: 49.52 },
               },
             },
           }),
@@ -112,7 +111,55 @@ describe("getProductPrices — operator denylist", () => {
     expect(prices.whatsapp?.operator).toBe("virtual28");
   });
 
-  it("leaves virtual8 selectable for a different country/product it isn't denylisted for", async () => {
+  it("makes virtual8 eligible again — and picks it as cheapest — once its live rate recovers above the floor", async () => {
+    // The whole point of a live floor over a name ban: no code change
+    // needed if the underlying operator's real rate improves.
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: () =>
+        Promise.resolve(
+          JSON.stringify({
+            usa: {
+              whatsapp: {
+                virtual8: { cost: 0.85, count: 7136, rate: 35 },
+                virtual28: { cost: 1.9231, count: 28871, rate: 49.52 },
+              },
+            },
+          }),
+        ),
+    } as Response);
+
+    const prices = await getProductPrices("usa");
+
+    expect(prices.whatsapp?.operator).toBe("virtual8");
+  });
+
+  it("excludes whichever operator drops below the floor, symmetrically — not just virtual8 by name", async () => {
+    // If virtual28 were the one to go bad instead, the same floor catches
+    // it without anyone having to notice and hand-edit a list.
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: () =>
+        Promise.resolve(
+          JSON.stringify({
+            usa: {
+              whatsapp: {
+                virtual8: { cost: 0.85, count: 7136, rate: 35 },
+                virtual28: { cost: 0.5, count: 28871, rate: 5 },
+              },
+            },
+          }),
+        ),
+    } as Response);
+
+    const prices = await getProductPrices("usa");
+
+    expect(prices.whatsapp?.operator).toBe("virtual8");
+  });
+
+  it("leaves virtual8 selectable for a country/product with no configured route floor", async () => {
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
       status: 200,

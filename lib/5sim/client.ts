@@ -90,24 +90,37 @@ interface FiveSimGuestPricesResponse {
   };
 }
 
-// Hard per-(country, product) operator denylist — a stronger, manually
-// reviewed exclusion than MIN_ACCEPTABLE_DELIVERY_RATE, for a case where
-// the floor's own fallback ("if nothing clears 70%, use cheapest in-stock
-// anyway") lands on an operator confirmed dead, not just unreliable.
+// Scoped per-(country, product) live rate floor — replaces a name-based
+// denylist (see git history) that banned "virtual8" outright for
+// usa/whatsapp. A name ban needs hand-maintenance forever: if that
+// operator's real delivery rate recovers it stays banned regardless, and
+// if a *different* operator on the same route goes bad nobody notices
+// until another string gets added. This instead re-checks 5sim's own live
+// `rate` for every operator on this route on every request and excludes
+// whichever ones are currently below the floor — self-correcting in both
+// directions, no code change needed either way.
 //
-// usa/whatsapp -> virtual8 (Sept 2026): 3 consecutive live orders
-// (2026-09-20, order ids 7751c93f, 7e2ac604, 289d3aea) all picked
-// virtual8 — cheapest in-stock ($0.85 vs $0.90-$1.92 for every other
-// operator, 7,594+ numbers in stock) but with a live 5sim `rate` of 0
-// (rate1=0, rate3=0.27, rate24=0.6) — and none delivered an SMS. That's
-// an observed 0% real-world delivery rate, not a hypothetical dip below
-// the 70 floor; excluded outright rather than left to the floor's
-// fallback, which would keep picking it back up as "cheapest" every time
-// every operator (virtual28 at ~18%, virtual63 at ~48%, at survey time)
-// fails to clear 70%. Revisit only if virtual8's own reported rate
-// recovers to something plausible.
-const OPERATOR_DENYLIST: Record<string, Record<string, ReadonlySet<string>>> = {
-  usa: { whatsapp: new Set(["virtual8"]) },
+// Deliberately separate from MIN_ACCEPTABLE_DELIVERY_RATE (70) below, and
+// scoped to usa/whatsapp only — not a change to the general "reliable"
+// tier used everywhere else. This is a pre-filter selectBestOperator never
+// sees past; its own 70%-floor logic still runs afterward on whatever
+// survives here, so a route with an operator that actually clears 70% will
+// still prefer it over a merely-above-30% one.
+//
+// Floor derivation (2026-09-20), from orders.fivesim_operator_rate joined
+// against orders.status — thin so far (12 rows) but a clean split: every
+// order whose operator's rate at purchase time was below ~20% failed to
+// deliver (8/8: virtual8, virtual51, virtual63, rates 0-16.3), while both
+// of our only two sms_received orders came from operators at 25% and
+// 34.48%. 30 sits a safe margin above that observed failure ceiling
+// without being as strict as the general 70% floor, which live data shows
+// would exclude operators on this route that otherwise look functional
+// (virtual28 at 38-49%, virtual63 at ~48%, observed same day) — the
+// problem being solved is virtual8-grade near-zero rates (0-1%), not
+// merely-imperfect ones. Revisit as orders.fivesim_operator_rate
+// accumulates more rows to bucket against.
+const ROUTE_RATE_FLOORS: Record<string, Record<string, number>> = {
+  usa: { whatsapp: 30 },
 };
 
 // Reliability-first operator selection (confirmed rule — see
@@ -211,19 +224,24 @@ export function getProfile(): Promise<FiveSimProfile> {
 // One call returns every product's price across every operator for the
 // whole country — used to price the entire catalog grid without one
 // request per service. For each product, collapses the operator list down
-// to the single one selectBestOperator picks (after removing any
-// OPERATOR_DENYLIST entries for this country/product first, so a denied
-// operator can never win even via the floor's cheapest-in-stock fallback).
+// to the single one selectBestOperator picks (after removing any operator
+// below this route's ROUTE_RATE_FLOORS entry first, if one is configured
+// for this country/product — a missing `rate` is left alone here too,
+// same "no data, not disqualifying" treatment selectBestOperator itself
+// gives it below).
 export async function getProductPrices(countryCode: string): Promise<FiveSimProductPrices> {
   const body = await fiveSimFetch<FiveSimGuestPricesResponse>(`/guest/prices?country=${countryCode}`);
   const countryBody = body[countryCode] ?? {};
   const result: FiveSimProductPrices = {};
 
   for (const [product, operators] of Object.entries(countryBody)) {
-    const denylisted = OPERATOR_DENYLIST[countryCode]?.[product];
-    const candidates = denylisted
-      ? Object.fromEntries(Object.entries(operators).filter(([operator]) => !denylisted.has(operator)))
-      : operators;
+    const routeFloor = ROUTE_RATE_FLOORS[countryCode]?.[product];
+    const candidates =
+      routeFloor === undefined
+        ? operators
+        : Object.fromEntries(
+            Object.entries(operators).filter(([, price]) => price.rate === undefined || price.rate >= routeFloor),
+          );
     const best = selectBestOperator(candidates);
     if (best) result[product] = best;
   }
