@@ -1,0 +1,15 @@
+# Scratch/investigation output and ad hoc admin scripts that live in the
+# working directory but were never meant to ship — `vercel deploy` uploads
+# the whole project directory regardless of git tracking status, so this
+# keeps untracked one-off scripts (audits, seed/recovery helpers,
+# investigation output) out of production deployment bundles.
+Claude outputs/
+scripts/check-operator-rate-units.mjs
+scripts/health-check-part1.mjs
+scripts/health-check-part2-pricing.mjs
+scripts/investigate-db-state.mjs
+scripts/lookup-recent-whatsapp-order.mjs
+scripts/pricing-audit-raw.json
+scripts/rls-audit.mjs
+scripts/seed-test-wallet.mjs
+scripts/send-recovery.mjs
