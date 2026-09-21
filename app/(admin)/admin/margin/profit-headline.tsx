@@ -26,7 +26,11 @@ export function ProfitHeadline({
 }) {
   const positive = report.realizedProfitKobo >= 0;
   const hasOrders = report.overall.orderCount > 0;
-  const onTarget = !hasOrders || report.overall.marginPct >= target;
+  // Compare the same rounded value that's displayed — see
+  // margin-by-service-table.tsx for why the raw float can't be compared
+  // directly against a 1-decimal target.
+  const displayMarginPct = Number(report.overall.marginPct.toFixed(1));
+  const onTarget = !hasOrders || displayMarginPct >= target;
 
   return (
     <div className="rounded-[14px] border border-line bg-paper-raised p-6 sm:p-8">
@@ -44,7 +48,7 @@ export function ProfitHeadline({
             {hasOrders ? (
               <>
                 <span className={`font-technical font-semibold ${onTarget ? "text-ink" : "text-danger"}`}>
-                  {report.overall.marginPct.toFixed(1)}%
+                  {displayMarginPct.toFixed(1)}%
                 </span>{" "}
                 margin · target {target}%
               </>

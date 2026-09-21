@@ -31,7 +31,11 @@ export function MarginByServiceTable({ rows, target }: { rows: ServiceMarginRow[
         </thead>
         <tbody>
           {rows.map((row) => {
-            const belowTarget = row.marginPct < target;
+            // Compare the same rounded value that's displayed — otherwise
+            // a row can show "44.7%" (rounded from 44.698...) yet be
+            // colored as below a 44.7% target, which reads as a bug.
+            const displayMarginPct = Number(row.marginPct.toFixed(1));
+            const belowTarget = displayMarginPct < target;
             return (
               <tr key={row.serviceId} className="border-b border-line last:border-0">
                 <td className="px-4 py-3 text-text">{row.serviceName}</td>
@@ -51,7 +55,7 @@ export function MarginByServiceTable({ rows, target }: { rows: ServiceMarginRow[
                       belowTarget ? "bg-danger/15 text-danger" : "bg-good/15 text-good"
                     }`}
                   >
-                    {row.marginPct.toFixed(1)}%
+                    {displayMarginPct.toFixed(1)}%
                   </span>
                 </td>
               </tr>
