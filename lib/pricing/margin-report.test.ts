@@ -3,6 +3,8 @@ import { summarizeMargin, TARGET_MARGIN_PCT, type MarginOrderInput } from "./mar
 
 const WHATSAPP = { serviceId: "svc-whatsapp", serviceName: "WhatsApp" };
 const TELEGRAM = { serviceId: "svc-telegram", serviceName: "Telegram" };
+const USA = { countryCode: "usa", countryName: "USA" };
+const UK = { countryCode: "uk", countryName: "UK" };
 
 function order(overrides: Partial<MarginOrderInput>): MarginOrderInput {
   return {
@@ -12,6 +14,7 @@ function order(overrides: Partial<MarginOrderInput>): MarginOrderInput {
     upstreamCancelSucceeded: null,
     createdAt: "2026-06-01T00:00:00.000Z",
     ...WHATSAPP,
+    ...USA,
     ...overrides,
   };
 }
@@ -69,7 +72,23 @@ describe("summarizeMargin", () => {
     expect(report.byService[1].marginPct).toBeCloseTo(40, 5);
   });
 
-  it("aggregates multiple orders for the same service into one row", () => {
+  it("splits the same service into separate rows per country instead of merging them", () => {
+    const report = summarizeMargin([
+      order({ ...WHATSAPP, ...USA, priceKobo: 100_000, upstreamCostKobo: 60_000 }),
+      order({ ...WHATSAPP, ...UK, priceKobo: 100_000, upstreamCostKobo: 90_000 }),
+    ]);
+
+    expect(report.byService).toHaveLength(2);
+    const usaRow = report.byService.find((r) => r.countryCode === "usa");
+    const ukRow = report.byService.find((r) => r.countryCode === "uk");
+    expect(usaRow?.serviceName).toBe("WhatsApp");
+    expect(usaRow?.countryName).toBe("USA");
+    expect(ukRow?.countryName).toBe("UK");
+    expect(usaRow?.orderCount).toBe(1);
+    expect(ukRow?.orderCount).toBe(1);
+  });
+
+  it("aggregates multiple orders for the same service AND country into one row", () => {
     const report = summarizeMargin([
       order({ priceKobo: 100_000, upstreamCostKobo: 70_000 }),
       order({ priceKobo: 200_000, upstreamCostKobo: 140_000 }),

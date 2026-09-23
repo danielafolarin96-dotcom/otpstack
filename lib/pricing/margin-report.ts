@@ -30,6 +30,8 @@ export interface MarginOrderInput {
   upstreamCostKobo: number;
   serviceId: string;
   serviceName: string;
+  countryCode: string;
+  countryName: string;
   // Set by lib/orders/expire-and-refund.ts / the manual-cancel route at
   // refund time: did the upstream 5sim cancelOrder() call actually
   // succeed? null covers non-refunded orders and refunds written before
@@ -62,6 +64,8 @@ export interface MarginBucket {
 export interface ServiceMarginRow extends MarginBucket {
   serviceId: string;
   serviceName: string;
+  countryCode: string;
+  countryName: string;
   // Revenue minus cost for this service, in kobo — the actual naira
   // contribution, not just the margin percentage.
   profitKobo: number;
@@ -93,6 +97,11 @@ export interface MarginReport {
     // lost for these.
     unknown: RefundOutcomeBucket;
   };
+  // Keyed by (service, country) — a service sold across multiple countries
+  // gets one row per country (e.g. "WhatsApp · USA" and "WhatsApp · UK"
+  // separately) rather than merging into a single service-only line, so a
+  // country-specific margin problem doesn't get diluted/hidden inside a
+  // service-wide average.
   byService: ServiceMarginRow[];
   // The actual naira bottom line: revenue kept minus upstream cost minus
   // refund cost (5sim doesn't refund us when we refund a customer, so that
@@ -149,16 +158,19 @@ export function summarizeMargin(orders: MarginOrderInput[], options: SummarizeMa
     overall.revenueKobo += order.priceKobo;
     overall.costKobo += order.upstreamCostKobo;
 
-    const existing = byServiceMap.get(order.serviceId) ?? {
+    const key = `${order.serviceId}:${order.countryCode}`;
+    const existing = byServiceMap.get(key) ?? {
       serviceId: order.serviceId,
       serviceName: order.serviceName,
+      countryCode: order.countryCode,
+      countryName: order.countryName,
       profitKobo: 0,
       ...emptyBucket(),
     };
     existing.orderCount += 1;
     existing.revenueKobo += order.priceKobo;
     existing.costKobo += order.upstreamCostKobo;
-    byServiceMap.set(order.serviceId, existing);
+    byServiceMap.set(key, existing);
   }
 
   const byService = Array.from(byServiceMap.values())
