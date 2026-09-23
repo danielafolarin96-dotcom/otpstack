@@ -19,6 +19,17 @@ const SERVICE = {
   category: "Messaging",
   icon_key: "whatsapp",
   is_active: true,
+  provider: "5sim",
+};
+
+const FEE_SCHEDULE = {
+  id: "fee-schedule-1",
+  payment_method: "default",
+  percent_bps: 150,
+  flat_kobo: 0,
+  cap_kobo: null,
+  is_default: true,
+  effective_from: new Date(Date.now() - 60_000).toISOString(),
 };
 
 const COUNTRY = {
@@ -63,6 +74,7 @@ function fakeAdminClient(
       select: () => typeof builder;
       eq: () => typeof builder;
       in: () => typeof builder;
+      lte: () => typeof builder;
       order: () => typeof builder;
       limit: () => typeof builder;
       maybeSingle: () => Promise<unknown>;
@@ -72,6 +84,7 @@ function fakeAdminClient(
       select: () => builder,
       eq: () => builder,
       in: () => builder,
+      lte: () => builder,
       order: () => builder,
       limit: () => builder,
       maybeSingle: () => Promise.resolve(result),
@@ -92,6 +105,7 @@ const baseConfigs = (): Record<string, { data: unknown; error: unknown; count?: 
   pricing_rules: { data: [GLOBAL_RULE], error: null },
   fx_rates: { data: { rate: 1600 }, error: null },
   wallets: { data: { balance_kobo: 1_000_000 }, error: null },
+  payment_fee_schedules: { data: FEE_SCHEDULE, error: null },
 });
 
 const baseRpcResult = () => ({
@@ -135,9 +149,43 @@ describe("purchaseNumber", () => {
         p_phone_number: FIVESIM_ORDER.phone,
         p_fivesim_operator: "virtual2",
         p_fivesim_operator_rate: 80,
+        p_provider: "5sim",
+        p_fee_schedule_id: FEE_SCHEDULE.id,
       }),
     );
     expect(cancelOrder).not.toHaveBeenCalled();
+  });
+
+  it("computes the payment fee from the active fee schedule and passes it to the RPC", async () => {
+    const client = fakeAdminClient(baseConfigs(), baseRpcResult());
+
+    await purchaseNumber(client, { userId: "user-1", serviceId: SERVICE.id, countryId: COUNTRY.id });
+
+    // resolved price = upstream cost (0.28 USD * 1600 rate = ₦448 = 44,800
+    // kobo) * 2 (the 100% global markup rule) = 89,600 kobo; 1.5% of that,
+    // rounded, is 1,344 kobo.
+    expect(client.rpc).toHaveBeenCalledWith(
+      "create_order_and_debit_wallet",
+      expect.objectContaining({ p_payment_fee_kobo: 1_344 }),
+    );
+  });
+
+  it("defaults the payment fee to 0 when no fee schedule is configured, without blocking the purchase", async () => {
+    const configs = baseConfigs();
+    configs.payment_fee_schedules = { data: null, error: null };
+    const client = fakeAdminClient(configs, baseRpcResult());
+
+    const result = await purchaseNumber(client, {
+      userId: "user-1",
+      serviceId: SERVICE.id,
+      countryId: COUNTRY.id,
+    });
+
+    expect(result.order.id).toBe("order-1");
+    expect(client.rpc).toHaveBeenCalledWith(
+      "create_order_and_debit_wallet",
+      expect.objectContaining({ p_payment_fee_kobo: 0, p_fee_schedule_id: undefined }),
+    );
   });
 
   it("rejects with 403 when the account is frozen, before ever calling 5sim", async () => {

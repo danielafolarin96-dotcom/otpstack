@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { cancelOrder } from "@/lib/5sim/client";
 import { recordWalletTransaction } from "@/lib/wallet/ledger";
+import { recordFinanceEvent } from "@/lib/finance/ledger";
 
 // Manual cancel-for-refund, per ARCHITECTURE.md's order lifecycle step 6 —
 // only while the order is still pending and not yet expired.
@@ -87,6 +88,34 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       { error: "Order cancelled but refund failed — contact support" },
       { status: 500 },
     );
+  }
+
+  // Reverses the revenue_recognized event written atomically at purchase
+  // time — see lib/orders/expire-and-refund.ts's identical comment for why
+  // the fee reversal is looked up rather than recomputed. Best-effort: a
+  // failure here doesn't block or reverse the refund the customer already
+  // received.
+  try {
+    const { data: recognized } = await admin
+      .from("finance_events")
+      .select("provider, payment_fee_kobo")
+      .eq("order_id", order.id)
+      .eq("event_type", "revenue_recognized")
+      .maybeSingle();
+
+    await recordFinanceEvent(admin, {
+      orderId: order.id,
+      userId: order.user_id,
+      eventType: "refund_issued",
+      serviceId: order.service_id,
+      countryCode: order.country_code,
+      provider: recognized?.provider ?? "5sim",
+      revenueKobo: -order.price_kobo,
+      providerCostKobo: upstreamCancelSucceeded ? -order.upstream_cost_kobo : 0,
+      paymentFeeKobo: recognized ? -recognized.payment_fee_kobo : 0,
+    });
+  } catch (err) {
+    console.error(`Failed to record finance_events refund for order ${order.id}:`, err);
   }
 
   return NextResponse.json({ ok: true });

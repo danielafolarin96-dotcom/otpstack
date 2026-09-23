@@ -13,6 +13,9 @@ const ORDER = {
   user_id: "user-1",
   fivesim_order_id: "999",
   price_kobo: 150_000,
+  upstream_cost_kobo: 45_000,
+  service_id: "service-1",
+  country_code: "usa",
 };
 
 // The "orders" table is updated twice per call: once to atomically claim
@@ -25,9 +28,20 @@ function fakeAdminClient(options: {
   claimResult: { data: unknown; error: unknown } | (() => { data: unknown; error: unknown });
   ledgerInsertResult?: { error: unknown };
   markResult?: { error: unknown };
+  financeLookupResult?: { data: unknown; error: unknown };
+  financeInsertResult?: { error: unknown };
+  onFinanceInsert?: (payload: Record<string, unknown>) => void;
   callOrder?: string[];
 }) {
-  const { claimResult, ledgerInsertResult = { error: null }, markResult = { error: null }, callOrder } = options;
+  const {
+    claimResult,
+    ledgerInsertResult = { error: null },
+    markResult = { error: null },
+    financeLookupResult = { data: { provider: "5sim", payment_fee_kobo: 2_250 }, error: null },
+    financeInsertResult = { error: null },
+    onFinanceInsert,
+    callOrder,
+  } = options;
 
   const from = vi.fn((table: string) => {
     if (table === "orders") {
@@ -54,6 +68,22 @@ function fakeAdminClient(options: {
         insert: () => {
           callOrder?.push("wallet_transactions.insert");
           return Promise.resolve(ledgerInsertResult);
+        },
+      };
+    }
+    if (table === "finance_events") {
+      return {
+        select: () => ({
+          eq: () => ({
+            eq: () => ({
+              maybeSingle: () => Promise.resolve(financeLookupResult),
+            }),
+          }),
+        }),
+        insert: (payload: Record<string, unknown>) => {
+          callOrder?.push("finance_events.insert");
+          onFinanceInsert?.(payload);
+          return Promise.resolve(financeInsertResult);
         },
       };
     }
@@ -136,7 +166,7 @@ describe("expireAndRefundOrder", () => {
 
     await expireAndRefundOrder(client, ORDER);
 
-    expect(callOrder).toEqual(["cancelOrder", "wallet_transactions.insert"]);
+    expect(callOrder).toEqual(["cancelOrder", "wallet_transactions.insert", "finance_events.insert"]);
   });
 
   it("still calls cancelOrder before the refund even when cancelOrder itself fails", async () => {
@@ -152,7 +182,7 @@ describe("expireAndRefundOrder", () => {
 
     await expireAndRefundOrder(client, ORDER);
 
-    expect(callOrder).toEqual(["cancelOrder", "wallet_transactions.insert"]);
+    expect(callOrder).toEqual(["cancelOrder", "wallet_transactions.insert", "finance_events.insert"]);
   });
 
   it("only refunds once when two expiry paths race for the same order — the DB-level claim is the actual guard", async () => {
@@ -175,5 +205,52 @@ describe("expireAndRefundOrder", () => {
     const refundedResults = [first, second].filter((r) => r.refunded);
     expect(refundedResults).toHaveLength(1);
     expect(cancelOrder).toHaveBeenCalledTimes(1);
+  });
+
+  it("reverses provider cost and the payment fee when the upstream cancel recovers the cost", async () => {
+    vi.mocked(cancelOrder).mockResolvedValue({} as never);
+    let insertedPayload: Record<string, unknown> | undefined;
+    const client = fakeAdminClient({
+      claimResult: { data: { ...ORDER, status: "expired_refunded" }, error: null },
+      onFinanceInsert: (payload) => {
+        insertedPayload = payload;
+      },
+    });
+
+    await expireAndRefundOrder(client, ORDER);
+
+    expect(insertedPayload).toMatchObject({
+      event_type: "refund_issued",
+      revenue_kobo: -150_000,
+      provider_cost_kobo: -45_000, // cancelOrder succeeded -> recovered, reversed
+      payment_fee_kobo: -2_250, // reverses the payment_fee_kobo recorded at purchase time
+    });
+  });
+
+  it("does NOT reverse provider cost when the upstream cancel fails (a genuine, unrecovered loss)", async () => {
+    vi.mocked(cancelOrder).mockRejectedValue(new Error("already expired upstream"));
+    let insertedPayload: Record<string, unknown> | undefined;
+    const client = fakeAdminClient({
+      claimResult: { data: { ...ORDER, status: "expired_refunded" }, error: null },
+      onFinanceInsert: (payload) => {
+        insertedPayload = payload;
+      },
+    });
+
+    await expireAndRefundOrder(client, ORDER);
+
+    expect(insertedPayload).toMatchObject({
+      provider_cost_kobo: 0, // not reversed -- 5sim keeps it, a real loss
+    });
+  });
+
+  it("still completes the refund even if recording the finance_events reversal fails (best-effort)", async () => {
+    vi.mocked(cancelOrder).mockResolvedValue({} as never);
+    const client = fakeAdminClient({
+      claimResult: { data: { ...ORDER, status: "expired_refunded" }, error: null },
+      financeInsertResult: { error: { message: "finance_events insert failed" } },
+    });
+
+    await expect(expireAndRefundOrder(client, ORDER)).resolves.toEqual({ refunded: true });
   });
 });

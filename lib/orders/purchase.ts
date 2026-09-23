@@ -3,6 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/types/database";
 import { buyActivation, cancelOrder, customerFacingPurchaseErrorMessage, getProductPrices } from "@/lib/5sim/client";
 import { fetchAllPricingRules, fetchLatestFxRate, priceFromRulesAndRate } from "@/lib/pricing/engine";
+import { computeFeeKobo, fetchActiveFeeSchedule } from "@/lib/finance/fee-schedule";
 
 const ORDER_TTL_MINUTES = 10;
 // SECURITY.md's rate-limiting example for purchase: "a cap on concurrent
@@ -97,15 +98,21 @@ export async function purchaseNumber(
     throw new PurchaseError(`${service.name} is not currently available in ${country.name}`, 409);
   }
 
-  const [allRules, fxRate] = await Promise.all([
+  const [allRules, fxRate, feeSchedule] = await Promise.all([
     fetchAllPricingRules(admin),
     fetchLatestFxRate(admin, UPSTREAM_CURRENCY_PAIR),
+    fetchActiveFeeSchedule(admin),
   ]);
 
   const resolved = priceFromRulesAndRate(allRules, fxRate, service.id, country.id, {
     amount: upstreamProduct.cost,
     currency: "USD",
   });
+
+  // No configured schedule degrades to a $0 imputed fee rather than
+  // blocking the purchase — see lib/finance/fee-schedule.ts. Computed here
+  // (not in SQL) so the fee formula lives in exactly one, unit-tested place.
+  const paymentFeeKobo = feeSchedule ? computeFeeKobo(resolved.priceKobo, feeSchedule) : 0;
 
   const { data: wallet, error: walletError } = await admin
     .from("wallets")
@@ -171,6 +178,9 @@ export async function purchaseNumber(
     // rate at purchase time instead of guessing at a floor.
     p_fivesim_operator: upstreamProduct.operator,
     p_fivesim_operator_rate: upstreamProduct.rate,
+    p_payment_fee_kobo: paymentFeeKobo,
+    p_fee_schedule_id: feeSchedule?.id,
+    p_provider: service.provider,
   });
 
   if (rpcError || !order) {

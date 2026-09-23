@@ -3,12 +3,16 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/types/database";
 import { cancelOrder } from "@/lib/5sim/client";
 import { recordWalletTransaction } from "@/lib/wallet/ledger";
+import { recordFinanceEvent } from "@/lib/finance/ledger";
 
 interface ExpirableOrder {
   id: string;
   user_id: string;
   fivesim_order_id: string;
   price_kobo: number;
+  upstream_cost_kobo: number;
+  service_id: string;
+  country_code: string;
 }
 
 export interface ExpireResult {
@@ -90,6 +94,38 @@ export async function expireAndRefundOrder(
     reference: `refund_expired_${order.id}`,
     orderId: order.id,
   });
+
+  // Reverses the revenue_recognized event written atomically at purchase
+  // time (create_order_and_debit_wallet) — looked up rather than
+  // recomputed, since payment_fee_kobo isn't stored on orders and a
+  // recompute against today's fee schedule could drift from what was
+  // actually recognized if the schedule changed since. Provider cost is
+  // only reversed when the upstream cancel actually succeeded above — same
+  // recovered-vs-lost distinction lib/pricing/margin-report.ts already
+  // tracks via upstream_cancel_succeeded. Best-effort: a failure here
+  // doesn't block or reverse the refund the customer already received.
+  try {
+    const { data: recognized } = await admin
+      .from("finance_events")
+      .select("provider, payment_fee_kobo")
+      .eq("order_id", order.id)
+      .eq("event_type", "revenue_recognized")
+      .maybeSingle();
+
+    await recordFinanceEvent(admin, {
+      orderId: order.id,
+      userId: order.user_id,
+      eventType: "refund_issued",
+      serviceId: order.service_id,
+      countryCode: order.country_code,
+      provider: recognized?.provider ?? "5sim",
+      revenueKobo: -order.price_kobo,
+      providerCostKobo: upstreamCancelSucceeded ? -order.upstream_cost_kobo : 0,
+      paymentFeeKobo: recognized ? -recognized.payment_fee_kobo : 0,
+    });
+  } catch (err) {
+    console.error(`Failed to record finance_events refund for order ${order.id}:`, err);
+  }
 
   return { refunded: true };
 }

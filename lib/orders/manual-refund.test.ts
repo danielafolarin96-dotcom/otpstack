@@ -13,6 +13,9 @@ const ORDER = {
   user_id: "user-1",
   fivesim_order_id: "999",
   price_kobo: 150_000,
+  upstream_cost_kobo: 45_000,
+  service_id: "service-1",
+  country_code: "usa",
 };
 
 const PARAMS = { orderId: "order-1", adminId: "admin-1", reason: "Dispute — code never worked" };
@@ -25,7 +28,17 @@ function fakeAdminClient(
   orderClaimResults: Array<{ data: unknown; error: unknown }>,
   ledgerInsertResult: { error: unknown } = { error: null },
   auditInsertResult: { error: unknown } = { error: null },
+  options: {
+    financeLookupResult?: { data: unknown; error: unknown };
+    financeInsertResult?: { error: unknown };
+    onFinanceInsert?: (payload: Record<string, unknown>) => void;
+  } = {},
 ) {
+  const {
+    financeLookupResult = { data: { provider: "5sim", payment_fee_kobo: 2_250 }, error: null },
+    financeInsertResult = { error: null },
+    onFinanceInsert,
+  } = options;
   let callIndex = 0;
   const from = vi.fn((table: string) => {
     if (table === "orders") {
@@ -48,6 +61,21 @@ function fakeAdminClient(
     }
     if (table === "admin_audit_log") {
       return { insert: () => Promise.resolve(auditInsertResult) };
+    }
+    if (table === "finance_events") {
+      return {
+        select: () => ({
+          eq: () => ({
+            eq: () => ({
+              maybeSingle: () => Promise.resolve(financeLookupResult),
+            }),
+          }),
+        }),
+        insert: (payload: Record<string, unknown>) => {
+          onFinanceInsert?.(payload);
+          return Promise.resolve(financeInsertResult);
+        },
+      };
     }
     throw new Error(`Unexpected table: ${table}`);
   });
@@ -125,5 +153,55 @@ describe("manualRefundOrder", () => {
     );
 
     await expect(manualRefundOrder(client, PARAMS)).rejects.toMatchObject({ message: "ledger insert failed" });
+  });
+
+  it("reverses provider cost when the pending order's upstream cancel succeeds", async () => {
+    vi.mocked(cancelOrder).mockResolvedValue({} as never);
+    let insertedPayload: Record<string, unknown> | undefined;
+    const client = fakeAdminClient(
+      [{ data: { ...ORDER, status: "cancelled_refunded" }, error: null }],
+      { error: null },
+      { error: null },
+      { onFinanceInsert: (payload) => (insertedPayload = payload) },
+    );
+
+    await manualRefundOrder(client, PARAMS);
+
+    expect(insertedPayload).toMatchObject({
+      event_type: "refund_issued",
+      revenue_kobo: -150_000,
+      provider_cost_kobo: -45_000,
+      payment_fee_kobo: -2_250,
+    });
+  });
+
+  it("does not reverse provider cost for an sms_received dispute refund (number already delivered a code, no upstream recovery attempted)", async () => {
+    let insertedPayload: Record<string, unknown> | undefined;
+    const client = fakeAdminClient(
+      [
+        { data: null, error: null },
+        { data: { ...ORDER, status: "cancelled_refunded" }, error: null },
+      ],
+      { error: null },
+      { error: null },
+      { onFinanceInsert: (payload) => (insertedPayload = payload) },
+    );
+
+    await manualRefundOrder(client, PARAMS);
+
+    expect(cancelOrder).not.toHaveBeenCalled();
+    expect(insertedPayload).toMatchObject({ provider_cost_kobo: 0 });
+  });
+
+  it("still completes the refund even if recording the finance_events reversal fails (best-effort)", async () => {
+    vi.mocked(cancelOrder).mockResolvedValue({} as never);
+    const client = fakeAdminClient(
+      [{ data: { ...ORDER, status: "cancelled_refunded" }, error: null }],
+      { error: null },
+      { error: null },
+      { financeInsertResult: { error: { message: "finance_events insert failed" } } },
+    );
+
+    await expect(manualRefundOrder(client, PARAMS)).resolves.toEqual({ refunded: true });
   });
 });

@@ -4,6 +4,7 @@ import type { Database } from "@/types/database";
 import { cancelOrder } from "@/lib/5sim/client";
 import { recordWalletTransaction } from "@/lib/wallet/ledger";
 import { recordAdminAction } from "@/lib/audit/log";
+import { recordFinanceEvent } from "@/lib/finance/ledger";
 
 export interface ManualRefundResult {
   // false means the order was already resolved (expired, cancelled,
@@ -67,9 +68,18 @@ export async function manualRefundOrder(
     return { refunded: false };
   }
 
+  // Only attempted when the number was never used (pending) -- an
+  // sms_received order already delivered a working code, so there's
+  // nothing to recover upstream and cancelling would be meaningless (see
+  // this function's header comment). upstreamCancelSucceeded feeds the
+  // finance_events reversal below: same recovered-vs-lost distinction the
+  // automatic refund paths track via orders.upstream_cancel_succeeded, just
+  // determined here instead of persisted on the order row.
+  let upstreamCancelSucceeded = false;
   if (previousStatus === "pending") {
     try {
       await cancelOrder(claimed.fivesim_order_id);
+      upstreamCancelSucceeded = true;
     } catch (err) {
       console.error(
         `Failed to cancel upstream 5sim order ${claimed.fivesim_order_id} on manual refund:`,
@@ -99,6 +109,34 @@ export async function manualRefundOrder(
       user_id: claimed.user_id,
     },
   });
+
+  // Reverses the revenue_recognized event written atomically at purchase
+  // time — see expire-and-refund.ts's identical comment for why the fee
+  // reversal is looked up rather than recomputed. Best-effort: a failure
+  // here doesn't block or reverse the refund the customer already received.
+  try {
+    const { data: recognized } = await admin
+      .from("finance_events")
+      .select("provider, payment_fee_kobo")
+      .eq("order_id", claimed.id)
+      .eq("event_type", "revenue_recognized")
+      .maybeSingle();
+
+    await recordFinanceEvent(admin, {
+      orderId: claimed.id,
+      userId: claimed.user_id,
+      eventType: "refund_issued",
+      serviceId: claimed.service_id,
+      countryCode: claimed.country_code,
+      provider: recognized?.provider ?? "5sim",
+      revenueKobo: -claimed.price_kobo,
+      providerCostKobo: upstreamCancelSucceeded ? -claimed.upstream_cost_kobo : 0,
+      paymentFeeKobo: recognized ? -recognized.payment_fee_kobo : 0,
+      metadata: { reason: params.reason, previous_status: previousStatus },
+    });
+  } catch (err) {
+    console.error(`Failed to record finance_events refund for order ${claimed.id}:`, err);
+  }
 
   return { refunded: true };
 }
