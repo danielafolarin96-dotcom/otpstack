@@ -42,7 +42,7 @@ export type Database = {
       admin_audit_log: {
         Row: {
           action: string
-          admin_id: string
+          admin_id: string | null
           created_at: string
           id: string
           metadata: Json
@@ -52,7 +52,7 @@ export type Database = {
         }
         Insert: {
           action: string
-          admin_id: string
+          admin_id?: string | null
           created_at?: string
           id?: string
           metadata?: Json
@@ -62,7 +62,7 @@ export type Database = {
         }
         Update: {
           action?: string
-          admin_id?: string
+          admin_id?: string | null
           created_at?: string
           id?: string
           metadata?: Json
@@ -103,6 +103,83 @@ export type Database = {
           name?: string
         }
         Relationships: []
+      }
+      finance_events: {
+        Row: {
+          country_code: string
+          created_at: string
+          event_type: Database["public"]["Enums"]["finance_event_type"]
+          fee_schedule_id: string | null
+          id: string
+          metadata: Json
+          order_id: string
+          payment_fee_kobo: number
+          provider: string
+          provider_cost_kobo: number
+          revenue_kobo: number
+          service_id: string
+          user_id: string
+        }
+        Insert: {
+          country_code: string
+          created_at?: string
+          event_type: Database["public"]["Enums"]["finance_event_type"]
+          fee_schedule_id?: string | null
+          id?: string
+          metadata?: Json
+          order_id: string
+          payment_fee_kobo: number
+          provider: string
+          provider_cost_kobo: number
+          revenue_kobo: number
+          service_id: string
+          user_id: string
+        }
+        Update: {
+          country_code?: string
+          created_at?: string
+          event_type?: Database["public"]["Enums"]["finance_event_type"]
+          fee_schedule_id?: string | null
+          id?: string
+          metadata?: Json
+          order_id?: string
+          payment_fee_kobo?: number
+          provider?: string
+          provider_cost_kobo?: number
+          revenue_kobo?: number
+          service_id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "finance_events_fee_schedule_id_fkey"
+            columns: ["fee_schedule_id"]
+            isOneToOne: false
+            referencedRelation: "payment_fee_schedules"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "finance_events_order_id_fkey"
+            columns: ["order_id"]
+            isOneToOne: false
+            referencedRelation: "orders"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "finance_events_service_id_fkey"
+            columns: ["service_id"]
+            isOneToOne: false
+            referencedRelation: "services"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "finance_events_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       fx_rates: {
         Row: {
@@ -200,6 +277,39 @@ export type Database = {
           },
         ]
       }
+      payment_fee_schedules: {
+        Row: {
+          cap_kobo: number | null
+          created_at: string
+          effective_from: string
+          flat_kobo: number
+          id: string
+          is_default: boolean
+          payment_method: string
+          percent_bps: number
+        }
+        Insert: {
+          cap_kobo?: number | null
+          created_at?: string
+          effective_from?: string
+          flat_kobo?: number
+          id?: string
+          is_default?: boolean
+          payment_method?: string
+          percent_bps: number
+        }
+        Update: {
+          cap_kobo?: number | null
+          created_at?: string
+          effective_from?: string
+          flat_kobo?: number
+          id?: string
+          is_default?: boolean
+          payment_method?: string
+          percent_bps?: number
+        }
+        Relationships: []
+      }
       pricing_rules: {
         Row: {
           country_id: string | null
@@ -295,6 +405,7 @@ export type Database = {
           id: string
           is_active: boolean
           name: string
+          provider: string
         }
         Insert: {
           category: string
@@ -303,6 +414,7 @@ export type Database = {
           id?: string
           is_active?: boolean
           name: string
+          provider?: string
         }
         Update: {
           category?: string
@@ -311,6 +423,7 @@ export type Database = {
           id?: string
           is_active?: boolean
           name?: string
+          provider?: string
         }
         Relationships: []
       }
@@ -431,12 +544,15 @@ export type Database = {
         Args: {
           p_country_code: string
           p_expires_at: string
+          p_fee_schedule_id?: string
           p_fivesim_operator?: string
           p_fivesim_operator_rate?: number
           p_fivesim_order_id: string
           p_metadata?: Json
+          p_payment_fee_kobo?: number
           p_phone_number: string
           p_price_kobo: number
+          p_provider?: string
           p_service_id: string
           p_upstream_cost_kobo: number
           p_user_id: string
@@ -468,6 +584,7 @@ export type Database = {
       }
     }
     Enums: {
+      finance_event_type: "revenue_recognized" | "refund_issued"
       order_status:
         | "pending"
         | "sms_received"
@@ -611,6 +728,7 @@ export const Constants = {
   },
   public: {
     Enums: {
+      finance_event_type: ["revenue_recognized", "refund_issued"],
       order_status: [
         "pending",
         "sms_received",
