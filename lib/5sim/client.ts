@@ -123,6 +123,29 @@ const ROUTE_RATE_FLOORS: Record<string, Record<string, number>> = {
   usa: { whatsapp: 30 },
 };
 
+// Explicit "always sell this named operator when it's in stock" pin —
+// distinct from ROUTE_RATE_FLOORS above, which recomputes a live threshold
+// every request and lets whichever operator currently clears it win on
+// cost. A pin is for a route we've deliberately reviewed and decided one
+// *specific* operator's reliability is worth its cost premium regardless
+// of what looks cheapest-in-stock this minute, because the live `rate`
+// field swings too much request-to-request to drive operator choice on
+// this route: usa/whatsapp's rate floor alone flip-flopped between
+// excluding and admitting virtual28 across two live checks made minutes
+// apart on 2026-09-23 (9.47% then 26.89%), which would otherwise have the
+// customer-facing operator (and price) change from one page load to the
+// next. Pinned here to virtual28 specifically — $1.9231/unit but a
+// meaningfully better delivery rate (~27-32% across recent checks) than
+// virtual8's near-zero rate (~2-4%) at roughly half the cost. Falls back
+// to the normal route-floor + cheapest-in-stock selection below if the
+// pinned operator itself runs out of stock, so the product doesn't vanish
+// just because one named operator is briefly sold out. Revisit (raise,
+// lower, or unpin) as orders.fivesim_operator_rate accumulates more
+// virtual28-specific outcomes to check this against.
+const ROUTE_OPERATOR_PINS: Record<string, Record<string, string>> = {
+  usa: { whatsapp: "virtual28" },
+};
+
 // Reliability-first operator selection (confirmed rule — see
 // MIN_ACCEPTABLE_DELIVERY_RATE above and ARCHITECTURE.md's 5sim
 // integration section): prefer the cheapest operator among those that are
@@ -143,6 +166,49 @@ export function selectBestOperator(
   const pool = reliable.length > 0 ? reliable : inStock;
 
   return pool.reduce((best, price) => (price.cost < best.cost ? price : best));
+}
+
+// Resolves the single operator getProductPrices sells for one
+// (countryCode, product) pair, in precedence order:
+//   1. ROUTE_OPERATOR_PINS — a named operator we've deliberately chosen for
+//      this exact route, used whenever it's in stock, regardless of cost,
+//      rate, or ROUTE_RATE_FLOORS.
+//   2. ROUTE_RATE_FLOORS + selectBestOperator — the live-rate-driven
+//      selection used everywhere else (or as this route's own fallback if
+//      the pinned operator is out of stock).
+//   3. selectBestOperator over the full unfiltered operator list, in case
+//      the route floor excluded every in-stock operator.
+export function selectOperatorForRoute(
+  countryCode: string,
+  product: string,
+  operators: Record<string, { cost: number; count: number; rate?: number }>,
+): FiveSimOperatorPrice | null {
+  const pinnedOperatorName = ROUTE_OPERATOR_PINS[countryCode]?.[product];
+  const pinned = pinnedOperatorName ? operators[pinnedOperatorName] : undefined;
+  if (pinned && pinned.count > 0) {
+    return { operator: pinnedOperatorName as string, ...pinned };
+  }
+
+  const routeFloor = ROUTE_RATE_FLOORS[countryCode]?.[product];
+  const candidates =
+    routeFloor === undefined
+      ? operators
+      : Object.fromEntries(
+          Object.entries(operators).filter(([, price]) => price.rate === undefined || price.rate >= routeFloor),
+        );
+
+  // The route floor is a *preference*, not a hard "don't sell this" rule —
+  // same philosophy as MIN_ACCEPTABLE_DELIVERY_RATE's own fallback in
+  // selectBestOperator. If every in-stock operator on this route happens
+  // to be below the route floor right now (rates move day to day — see
+  // ROUTE_RATE_FLOORS's derivation comment above), fall back to selecting
+  // from the full unfiltered operator list instead of treating the
+  // product as unavailable. Confirmed live 2026-09-23: usa/whatsapp's only
+  // two in-stock operators (virtual28 at 9.47%, virtual8 at 2.76%) both
+  // dropped under the 30 floor, which — with no fallback — made WhatsApp
+  // disappear from the USA catalog entirely even though it was in stock
+  // and purchasable, just at worse-than-preferred reliability.
+  return selectBestOperator(candidates) ?? selectBestOperator(operators);
 }
 
 export class FiveSimError extends Error {
@@ -224,36 +290,15 @@ export function getProfile(): Promise<FiveSimProfile> {
 // One call returns every product's price across every operator for the
 // whole country — used to price the entire catalog grid without one
 // request per service. For each product, collapses the operator list down
-// to the single one selectBestOperator picks (after removing any operator
-// below this route's ROUTE_RATE_FLOORS entry first, if one is configured
-// for this country/product — a missing `rate` is left alone here too,
-// same "no data, not disqualifying" treatment selectBestOperator itself
-// gives it below).
+// to the single one selectOperatorForRoute picks — see that function for
+// the full pin / rate-floor / fallback precedence.
 export async function getProductPrices(countryCode: string): Promise<FiveSimProductPrices> {
   const body = await fiveSimFetch<FiveSimGuestPricesResponse>(`/guest/prices?country=${countryCode}`);
   const countryBody = body[countryCode] ?? {};
   const result: FiveSimProductPrices = {};
 
   for (const [product, operators] of Object.entries(countryBody)) {
-    const routeFloor = ROUTE_RATE_FLOORS[countryCode]?.[product];
-    const candidates =
-      routeFloor === undefined
-        ? operators
-        : Object.fromEntries(
-            Object.entries(operators).filter(([, price]) => price.rate === undefined || price.rate >= routeFloor),
-          );
-    // The route floor is a *preference*, not a hard "don't sell this"
-    // rule — same philosophy as MIN_ACCEPTABLE_DELIVERY_RATE's own fallback
-    // in selectBestOperator. If every in-stock operator on this route
-    // happens to be below the route floor right now (rates move day to
-    // day — see ROUTE_RATE_FLOORS's derivation comment above), fall back to
-    // selecting from the full unfiltered operator list instead of treating
-    // the product as unavailable. Confirmed live 2026-09-23: usa/whatsapp's
-    // only two in-stock operators (virtual28 at 9.47%, virtual8 at 2.76%)
-    // both dropped under the 30 floor, which — with no fallback — made
-    // WhatsApp disappear from the USA catalog entirely even though it was
-    // in stock and purchasable, just at worse-than-preferred reliability.
-    const best = selectBestOperator(candidates) ?? selectBestOperator(operators);
+    const best = selectOperatorForRoute(countryCode, product, operators);
     if (best) result[product] = best;
   }
 

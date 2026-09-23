@@ -5,6 +5,7 @@ import {
   FiveSimError,
   getProductPrices,
   selectBestOperator,
+  selectOperatorForRoute,
 } from "./client";
 
 describe("selectBestOperator", () => {
@@ -76,20 +77,79 @@ describe("selectBestOperator", () => {
   });
 });
 
-describe("getProductPrices — usa/whatsapp scoped rate floor", () => {
+describe("selectOperatorForRoute — usa/whatsapp operator pin", () => {
+  it("pins usa/whatsapp to virtual28 even though virtual8 is cheaper, in stock, and has a better live rate", () => {
+    // The pin (see ROUTE_OPERATOR_PINS in client.ts) is a deliberate
+    // reliability choice for this exact route, not a rate/cost comparison
+    // — it wins even in the scenario that would otherwise favor virtual8
+    // on every axis selectBestOperator considers.
+    const result = selectOperatorForRoute("usa", "whatsapp", {
+      virtual28: { cost: 1.9231, count: 100, rate: 20 },
+      virtual8: { cost: 0.85, count: 100, rate: 90 },
+    });
+
+    expect(result?.operator).toBe("virtual28");
+  });
+
+  it("keeps virtual28 pinned even when its own live rate craters — unlike the old floor-based exclusion", () => {
+    // This is the behavior change from the previous rate-floor-only
+    // design: a live rate dip used to be able to exclude virtual28 (see
+    // ROUTE_RATE_FLOORS). The pin intentionally ignores rate entirely so
+    // the customer-facing operator (and price) stays stable rather than
+    // flipping between requests as 5sim's live rate figure moves.
+    const result = selectOperatorForRoute("usa", "whatsapp", {
+      virtual28: { cost: 1.9231, count: 50, rate: 2 },
+      virtual8: { cost: 0.85, count: 50, rate: 90 },
+    });
+
+    expect(result?.operator).toBe("virtual28");
+  });
+
+  it("falls through to the route floor + fallback selection when the pinned operator is out of stock", () => {
+    // A pin only applies when the pinned operator is actually sellable.
+    // With virtual28 out of stock, selection proceeds exactly as it did
+    // before the pin existed: apply ROUTE_RATE_FLOORS (30 for this
+    // route), then selectBestOperator over whatever survives.
+    const result = selectOperatorForRoute("usa", "whatsapp", {
+      virtual28: { cost: 1.9231, count: 0, rate: 50 },
+      virtual8: { cost: 0.85, count: 100, rate: 10 },
+      virtual99: { cost: 1, count: 50, rate: 40 },
+    });
+
+    expect(result?.operator).toBe("virtual99");
+  });
+
+  it("does not apply the pin to a different product in the same country", () => {
+    // ROUTE_OPERATOR_PINS is keyed by (country, product) — usa/signal
+    // isn't pinned, so an in-stock virtual28 here must not win just
+    // because it happens to share a name with the pinned usa/whatsapp
+    // operator.
+    const result = selectOperatorForRoute("usa", "signal", {
+      virtual28: { cost: 0.1, count: 10, rate: 5 },
+      virtual51: { cost: 0.05, count: 10, rate: 90 },
+    });
+
+    expect(result?.operator).toBe("virtual51");
+  });
+
+  it("does not apply the pin to the same operator name in a different country", () => {
+    const result = selectOperatorForRoute("canada", "whatsapp", {
+      virtual28: { cost: 0.1, count: 10, rate: 5 },
+      virtual8: { cost: 0.05, count: 10, rate: 90 },
+    });
+
+    expect(result?.operator).toBe("virtual8");
+  });
+});
+
+describe("getProductPrices — usa/whatsapp route floor + operator pin", () => {
   const originalFetch = global.fetch;
 
   afterEach(() => {
     global.fetch = originalFetch;
   });
 
-  it("excludes virtual8 when its live rate is below the 30 floor, even though it's cheapest and in stock", async () => {
-    // Real scenario (Sept 2026): virtual8 was cheapest ($0.85) and had
-    // thousands in stock, but its live 5sim rate sat at ~0-1% and 3
-    // consecutive orders on it all failed to deliver an SMS — see
-    // ROUTE_RATE_FLOORS' comment in client.ts. This is the rate-based
-    // successor to a name-based denylist: it re-checks the live rate on
-    // every call rather than banning "virtual8" by name.
+  it("pins usa/whatsapp to virtual28 through the full getProductPrices call, even though virtual8 is cheaper and in stock", async () => {
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
@@ -98,7 +158,7 @@ describe("getProductPrices — usa/whatsapp scoped rate floor", () => {
           JSON.stringify({
             usa: {
               whatsapp: {
-                virtual8: { cost: 0.85, count: 7136, rate: 0.28 },
+                virtual8: { cost: 0.85, count: 7136, rate: 90 },
                 virtual28: { cost: 1.9231, count: 28871, rate: 49.52 },
               },
             },
@@ -111,9 +171,14 @@ describe("getProductPrices — usa/whatsapp scoped rate floor", () => {
     expect(prices.whatsapp?.operator).toBe("virtual28");
   });
 
-  it("makes virtual8 eligible again — and picks it as cheapest — once its live rate recovers above the floor", async () => {
-    // The whole point of a live floor over a name ban: no code change
-    // needed if the underlying operator's real rate improves.
+  it("still returns a product via the floor + fallback path when the pinned operator is out of stock and every remaining in-stock operator falls below the route floor", async () => {
+    // Real regression this route hit twice (Sept 2026): first with no pin
+    // at all, both in-stock operators (virtual28, virtual8) fell below the
+    // 30 floor at once and the product vanished from the catalog with no
+    // fallback. Now that virtual28 is pinned, the same fallback path still
+    // needs to work for the case where virtual28 itself is the one that's
+    // out of stock — the pin isn't a replacement for the floor/fallback
+    // mechanism, only a higher-precedence override of it.
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
@@ -122,63 +187,7 @@ describe("getProductPrices — usa/whatsapp scoped rate floor", () => {
           JSON.stringify({
             usa: {
               whatsapp: {
-                virtual8: { cost: 0.85, count: 7136, rate: 35 },
-                virtual28: { cost: 1.9231, count: 28871, rate: 49.52 },
-              },
-            },
-          }),
-        ),
-    } as Response);
-
-    const prices = await getProductPrices("usa");
-
-    expect(prices.whatsapp?.operator).toBe("virtual8");
-  });
-
-  it("excludes whichever operator drops below the floor, symmetrically — not just virtual8 by name", async () => {
-    // If virtual28 were the one to go bad instead, the same floor catches
-    // it without anyone having to notice and hand-edit a list.
-    global.fetch = vi.fn().mockResolvedValue({
-      ok: true,
-      status: 200,
-      text: () =>
-        Promise.resolve(
-          JSON.stringify({
-            usa: {
-              whatsapp: {
-                virtual8: { cost: 0.85, count: 7136, rate: 35 },
-                virtual28: { cost: 0.5, count: 28871, rate: 5 },
-              },
-            },
-          }),
-        ),
-    } as Response);
-
-    const prices = await getProductPrices("usa");
-
-    expect(prices.whatsapp?.operator).toBe("virtual8");
-  });
-
-  it("still returns a product when every in-stock operator falls below the route floor, instead of dropping it from the catalog", async () => {
-    // Real regression (found live, Sept 2026): virtual28's rate on this
-    // route drifted down to 9.47% and virtual8 stayed near-zero at 2.76%,
-    // so *both* in-stock operators fell below the 30 floor at once. The
-    // route floor is a preference, not a "don't sell this" rule — with no
-    // fallback, getProductPrices returned no `whatsapp` key at all, which
-    // made WhatsApp silently vanish from the USA "Get a number" page even
-    // though it was genuinely in stock and purchasable. Falling back to
-    // the full unfiltered operator list (same fallback philosophy as
-    // MIN_ACCEPTABLE_DELIVERY_RATE's own in selectBestOperator) picks the
-    // cheapest in-stock operator overall instead of nothing.
-    global.fetch = vi.fn().mockResolvedValue({
-      ok: true,
-      status: 200,
-      text: () =>
-        Promise.resolve(
-          JSON.stringify({
-            usa: {
-              whatsapp: {
-                virtual28: { cost: 1.9231, count: 24801, rate: 9.47 },
+                virtual28: { cost: 1.9231, count: 0, rate: 9.47 },
                 virtual51: { cost: 0.8974, count: 0 },
                 virtual63: { cost: 1.92, count: 0, rate: 7.41 },
                 virtual8: { cost: 0.85, count: 1254, rate: 2.76 },
