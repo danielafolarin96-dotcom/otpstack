@@ -242,7 +242,18 @@ export async function getProductPrices(countryCode: string): Promise<FiveSimProd
         : Object.fromEntries(
             Object.entries(operators).filter(([, price]) => price.rate === undefined || price.rate >= routeFloor),
           );
-    const best = selectBestOperator(candidates);
+    // The route floor is a *preference*, not a hard "don't sell this"
+    // rule — same philosophy as MIN_ACCEPTABLE_DELIVERY_RATE's own fallback
+    // in selectBestOperator. If every in-stock operator on this route
+    // happens to be below the route floor right now (rates move day to
+    // day — see ROUTE_RATE_FLOORS's derivation comment above), fall back to
+    // selecting from the full unfiltered operator list instead of treating
+    // the product as unavailable. Confirmed live 2026-09-23: usa/whatsapp's
+    // only two in-stock operators (virtual28 at 9.47%, virtual8 at 2.76%)
+    // both dropped under the 30 floor, which — with no fallback — made
+    // WhatsApp disappear from the USA catalog entirely even though it was
+    // in stock and purchasable, just at worse-than-preferred reliability.
+    const best = selectBestOperator(candidates) ?? selectBestOperator(operators);
     if (best) result[product] = best;
   }
 

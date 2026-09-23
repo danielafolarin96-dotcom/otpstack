@@ -159,6 +159,66 @@ describe("getProductPrices — usa/whatsapp scoped rate floor", () => {
     expect(prices.whatsapp?.operator).toBe("virtual8");
   });
 
+  it("still returns a product when every in-stock operator falls below the route floor, instead of dropping it from the catalog", async () => {
+    // Real regression (found live, Sept 2026): virtual28's rate on this
+    // route drifted down to 9.47% and virtual8 stayed near-zero at 2.76%,
+    // so *both* in-stock operators fell below the 30 floor at once. The
+    // route floor is a preference, not a "don't sell this" rule — with no
+    // fallback, getProductPrices returned no `whatsapp` key at all, which
+    // made WhatsApp silently vanish from the USA "Get a number" page even
+    // though it was genuinely in stock and purchasable. Falling back to
+    // the full unfiltered operator list (same fallback philosophy as
+    // MIN_ACCEPTABLE_DELIVERY_RATE's own in selectBestOperator) picks the
+    // cheapest in-stock operator overall instead of nothing.
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: () =>
+        Promise.resolve(
+          JSON.stringify({
+            usa: {
+              whatsapp: {
+                virtual28: { cost: 1.9231, count: 24801, rate: 9.47 },
+                virtual51: { cost: 0.8974, count: 0 },
+                virtual63: { cost: 1.92, count: 0, rate: 7.41 },
+                virtual8: { cost: 0.85, count: 1254, rate: 2.76 },
+              },
+            },
+          }),
+        ),
+    } as Response);
+
+    const prices = await getProductPrices("usa");
+
+    expect(prices.whatsapp).toBeDefined();
+    expect(prices.whatsapp?.operator).toBe("virtual8");
+  });
+
+  it("still reports no price when a route-floored product has no stock at all, even after the fallback", async () => {
+    // The fallback must not fabricate availability that doesn't exist —
+    // it only widens the pool selectBestOperator chooses from, and
+    // selectBestOperator still returns null when nothing is in stock.
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: () =>
+        Promise.resolve(
+          JSON.stringify({
+            usa: {
+              whatsapp: {
+                virtual28: { cost: 1.9231, count: 0, rate: 9.47 },
+                virtual8: { cost: 0.85, count: 0, rate: 2.76 },
+              },
+            },
+          }),
+        ),
+    } as Response);
+
+    const prices = await getProductPrices("usa");
+
+    expect(prices.whatsapp).toBeUndefined();
+  });
+
   it("leaves virtual8 selectable for a country/product with no configured route floor", async () => {
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
