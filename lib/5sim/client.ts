@@ -90,70 +90,54 @@ interface FiveSimGuestPricesResponse {
   };
 }
 
-// Scoped per-(country, product) live rate floor — replaces a name-based
-// denylist (see git history) that banned "virtual8" outright for
-// usa/whatsapp. A name ban needs hand-maintenance forever: if that
-// operator's real delivery rate recovers it stays banned regardless, and
-// if a *different* operator on the same route goes bad nobody notices
-// until another string gets added. This instead re-checks 5sim's own live
-// `rate` for every operator on this route on every request and excludes
-// whichever ones are currently below the floor — self-correcting in both
-// directions, no code change needed either way.
+// Routes where a known-unreliable operator must never be sold through,
+// even via selectBestOperator's normal "worse number beats no number"
+// fallback below. Replaces two earlier, route-specific workarounds for
+// usa/whatsapp (a ROUTE_RATE_FLOORS 30%-floor pre-filter, then a hardcoded
+// ROUTE_OPERATOR_PINS pin to virtual28 "regardless of rate" — see git
+// history) — both were reactions to that one route's rate looking
+// volatile, and both quietly assumed the pinned/floored operator was
+// actually reliable without checking real order outcomes.
 //
-// Deliberately separate from MIN_ACCEPTABLE_DELIVERY_RATE (70) below, and
-// scoped to usa/whatsapp only — not a change to the general "reliable"
-// tier used everywhere else. This is a pre-filter selectBestOperator never
-// sees past; its own 70%-floor logic still runs afterward on whatever
-// survives here, so a route with an operator that actually clears 70% will
-// still prefer it over a merely-above-30% one.
+// A 2026-09-24 audit of the live orders table found otherwise: usa/
+// whatsapp on the virtual28 pin was refunding ~50% of orders (2 of 4 since
+// the pin), and usa/telegram — never pinned or floored, just running the
+// general fallback below — was refunding 6 of 7 orders, every one of them
+// via an operator (virtual63) whose recorded rate at purchase time was
+// under 30%, well below MIN_ACCEPTABLE_DELIVERY_RATE. In both cases the
+// fallback's "sell the cheapest in-stock operator anyway" behavior was
+// doing exactly what it's designed to do — keep the route sellable — but
+// at a refund cost that made those orders net-negative even though the
+// pricing engine's margin on completed orders was correct.
 //
-// Floor derivation (2026-09-20), from orders.fivesim_operator_rate joined
-// against orders.status — thin so far (12 rows) but a clean split: every
-// order whose operator's rate at purchase time was below ~20% failed to
-// deliver (8/8: virtual8, virtual51, virtual63, rates 0-16.3), while both
-// of our only two sms_received orders came from operators at 25% and
-// 34.48%. 30 sits a safe margin above that observed failure ceiling
-// without being as strict as the general 70% floor, which live data shows
-// would exclude operators on this route that otherwise look functional
-// (virtual28 at 38-49%, virtual63 at ~48%, observed same day) — the
-// problem being solved is virtual8-grade near-zero rates (0-1%), not
-// merely-imperfect ones. Revisit as orders.fivesim_operator_rate
-// accumulates more rows to bucket against.
-const ROUTE_RATE_FLOORS: Record<string, Record<string, number>> = {
-  usa: { whatsapp: 30 },
-};
-
-// Explicit "always sell this named operator when it's in stock" pin —
-// distinct from ROUTE_RATE_FLOORS above, which recomputes a live threshold
-// every request and lets whichever operator currently clears it win on
-// cost. A pin is for a route we've deliberately reviewed and decided one
-// *specific* operator's reliability is worth its cost premium regardless
-// of what looks cheapest-in-stock this minute, because the live `rate`
-// field swings too much request-to-request to drive operator choice on
-// this route: usa/whatsapp's rate floor alone flip-flopped between
-// excluding and admitting virtual28 across two live checks made minutes
-// apart on 2026-09-23 (9.47% then 26.89%), which would otherwise have the
-// customer-facing operator (and price) change from one page load to the
-// next. Pinned here to virtual28 specifically — $1.9231/unit but a
-// meaningfully better delivery rate (~27-32% across recent checks) than
-// virtual8's near-zero rate (~2-4%) at roughly half the cost. Falls back
-// to the normal route-floor + cheapest-in-stock selection below if the
-// pinned operator itself runs out of stock, so the product doesn't vanish
-// just because one named operator is briefly sold out. Revisit (raise,
-// lower, or unpin) as orders.fivesim_operator_rate accumulates more
-// virtual28-specific outcomes to check this against.
-const ROUTE_OPERATOR_PINS: Record<string, Record<string, string>> = {
-  usa: { whatsapp: "virtual28" },
+// Scoped to just these two routes rather than changing the fallback
+// globally: every other product/country combo relies on that fallback to
+// stay sellable at all when 5sim's stock is thin, and hasn't shown this
+// failure pattern. usa/whatsapp and usa/telegram instead go fully
+// unavailable (computeCatalogPrices already renders that as "price
+// unavailable"; purchaseNumber already 409s with "not currently available
+// in <country>") whenever nothing on the route clears the standard 70%
+// floor, rather than silently selling a coin-flip number. Revisit
+// (loosen, extend to other routes, or remove) once
+// orders.fivesim_operator_rate has enough post-fix rows to show whether
+// 5sim's pool on these routes has actually improved.
+const HARD_RELIABILITY_FLOOR_ROUTES: Record<string, Set<string>> = {
+  usa: new Set(["whatsapp", "telegram"]),
 };
 
 // Reliability-first operator selection (confirmed rule — see
 // MIN_ACCEPTABLE_DELIVERY_RATE above and ARCHITECTURE.md's 5sim
 // integration section): prefer the cheapest operator among those that are
-// in stock and not confirmed unreliable. If every in-stock operator falls
-// below the floor, fall back to the cheapest in-stock operator overall —
-// a worse number still beats no number at all.
+// in stock and not confirmed unreliable. By default, if every in-stock
+// operator falls below the floor, falls back to the cheapest in-stock
+// operator overall — a worse number still beats no number at all. Pass
+// `allowUnreliableFallback: false` (see selectOperatorForRoute's
+// HARD_RELIABILITY_FLOOR_ROUTES) to disable that fallback instead and
+// return null, for a route where a below-floor operator must never be
+// sold rather than merely deprioritized.
 export function selectBestOperator(
   operators: Record<string, { cost: number; count: number; rate?: number }>,
+  options: { allowUnreliableFallback?: boolean } = {},
 ): FiveSimOperatorPrice | null {
   const inStock = Object.entries(operators)
     .filter(([, price]) => price.count > 0)
@@ -163,52 +147,26 @@ export function selectBestOperator(
   const reliable = inStock.filter(
     (price) => price.rate === undefined || price.rate >= MIN_ACCEPTABLE_DELIVERY_RATE,
   );
-  const pool = reliable.length > 0 ? reliable : inStock;
+  const allowFallback = options.allowUnreliableFallback ?? true;
+  const pool = reliable.length > 0 ? reliable : allowFallback ? inStock : [];
+  if (pool.length === 0) return null;
 
   return pool.reduce((best, price) => (price.cost < best.cost ? price : best));
 }
 
 // Resolves the single operator getProductPrices sells for one
-// (countryCode, product) pair, in precedence order:
-//   1. ROUTE_OPERATOR_PINS — a named operator we've deliberately chosen for
-//      this exact route, used whenever it's in stock, regardless of cost,
-//      rate, or ROUTE_RATE_FLOORS.
-//   2. ROUTE_RATE_FLOORS + selectBestOperator — the live-rate-driven
-//      selection used everywhere else (or as this route's own fallback if
-//      the pinned operator is out of stock).
-//   3. selectBestOperator over the full unfiltered operator list, in case
-//      the route floor excluded every in-stock operator.
+// (countryCode, product) pair. Routes in HARD_RELIABILITY_FLOOR_ROUTES
+// only ever sell an operator that clears MIN_ACCEPTABLE_DELIVERY_RATE (or
+// has no rate reported at all — unproven, not disqualifying) and return
+// null — "not currently available" — when none do. Every other route uses
+// selectBestOperator's normal behavior unchanged, fallback included.
 export function selectOperatorForRoute(
   countryCode: string,
   product: string,
   operators: Record<string, { cost: number; count: number; rate?: number }>,
 ): FiveSimOperatorPrice | null {
-  const pinnedOperatorName = ROUTE_OPERATOR_PINS[countryCode]?.[product];
-  const pinned = pinnedOperatorName ? operators[pinnedOperatorName] : undefined;
-  if (pinned && pinned.count > 0) {
-    return { operator: pinnedOperatorName as string, ...pinned };
-  }
-
-  const routeFloor = ROUTE_RATE_FLOORS[countryCode]?.[product];
-  const candidates =
-    routeFloor === undefined
-      ? operators
-      : Object.fromEntries(
-          Object.entries(operators).filter(([, price]) => price.rate === undefined || price.rate >= routeFloor),
-        );
-
-  // The route floor is a *preference*, not a hard "don't sell this" rule —
-  // same philosophy as MIN_ACCEPTABLE_DELIVERY_RATE's own fallback in
-  // selectBestOperator. If every in-stock operator on this route happens
-  // to be below the route floor right now (rates move day to day — see
-  // ROUTE_RATE_FLOORS's derivation comment above), fall back to selecting
-  // from the full unfiltered operator list instead of treating the
-  // product as unavailable. Confirmed live 2026-09-23: usa/whatsapp's only
-  // two in-stock operators (virtual28 at 9.47%, virtual8 at 2.76%) both
-  // dropped under the 30 floor, which — with no fallback — made WhatsApp
-  // disappear from the USA catalog entirely even though it was in stock
-  // and purchasable, just at worse-than-preferred reliability.
-  return selectBestOperator(candidates) ?? selectBestOperator(operators);
+  const requiresReliableOperator = HARD_RELIABILITY_FLOOR_ROUTES[countryCode]?.has(product) ?? false;
+  return selectBestOperator(operators, { allowUnreliableFallback: !requiresReliableOperator });
 }
 
 export class FiveSimError extends Error {

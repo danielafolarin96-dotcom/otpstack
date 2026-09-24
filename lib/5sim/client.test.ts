@@ -75,81 +75,104 @@ describe("selectBestOperator", () => {
 
     expect(result).toBeNull();
   });
+
+  it("with allowUnreliableFallback: false, returns null instead of falling back when none clear the floor", () => {
+    // The hard-floor mode selectOperatorForRoute uses for
+    // HARD_RELIABILITY_FLOOR_ROUTES — a below-floor operator must never be
+    // sold on these routes, not just deprioritized.
+    const result = selectBestOperator(
+      { worse: { cost: 0.3, count: 10, rate: 10 }, leastBad: { cost: 0.2, count: 10, rate: 30 } },
+      { allowUnreliableFallback: false },
+    );
+
+    expect(result).toBeNull();
+  });
+
+  it("with allowUnreliableFallback: false, still returns the cheapest operator that does clear the floor", () => {
+    const result = selectBestOperator(
+      { unreliable: { cost: 0.1, count: 10, rate: 10 }, reliable: { cost: 0.3, count: 10, rate: 80 } },
+      { allowUnreliableFallback: false },
+    );
+
+    expect(result?.operator).toBe("reliable");
+  });
+
+  it("with allowUnreliableFallback: false, still treats a missing rate as neutral, not disqualifying", () => {
+    const result = selectBestOperator(
+      { noRateData: { cost: 0.15, count: 100 }, confirmedUnreliable: { cost: 0.1, count: 100, rate: 20 } },
+      { allowUnreliableFallback: false },
+    );
+
+    expect(result?.operator).toBe("noRateData");
+  });
 });
 
-describe("selectOperatorForRoute — usa/whatsapp operator pin", () => {
-  it("pins usa/whatsapp to virtual28 even though virtual8 is cheaper, in stock, and has a better live rate", () => {
-    // The pin (see ROUTE_OPERATOR_PINS in client.ts) is a deliberate
-    // reliability choice for this exact route, not a rate/cost comparison
-    // — it wins even in the scenario that would otherwise favor virtual8
-    // on every axis selectBestOperator considers.
+describe("selectOperatorForRoute — hard reliability floor on usa/whatsapp and usa/telegram", () => {
+  // 2026-09-24 investigation: usa/whatsapp had been hardcoded to virtual28
+  // regardless of rate (the old ROUTE_OPERATOR_PINS), and usa/telegram had
+  // no route-specific handling at all — both ended up selling through
+  // operators well under MIN_ACCEPTABLE_DELIVERY_RATE via the general
+  // fallback, at a refund rate real order data showed was ~50-86%. Both
+  // routes are now in HARD_RELIABILITY_FLOOR_ROUTES: no fallback to an
+  // unreliable operator, ever.
+  it("does not fall back to a below-floor operator on usa/whatsapp — returns null instead", () => {
     const result = selectOperatorForRoute("usa", "whatsapp", {
       virtual28: { cost: 1.9231, count: 100, rate: 20 },
-      virtual8: { cost: 0.85, count: 100, rate: 90 },
-    });
-
-    expect(result?.operator).toBe("virtual28");
-  });
-
-  it("keeps virtual28 pinned even when its own live rate craters — unlike the old floor-based exclusion", () => {
-    // This is the behavior change from the previous rate-floor-only
-    // design: a live rate dip used to be able to exclude virtual28 (see
-    // ROUTE_RATE_FLOORS). The pin intentionally ignores rate entirely so
-    // the customer-facing operator (and price) stays stable rather than
-    // flipping between requests as 5sim's live rate figure moves.
-    const result = selectOperatorForRoute("usa", "whatsapp", {
-      virtual28: { cost: 1.9231, count: 50, rate: 2 },
-      virtual8: { cost: 0.85, count: 50, rate: 90 },
-    });
-
-    expect(result?.operator).toBe("virtual28");
-  });
-
-  it("falls through to the route floor + fallback selection when the pinned operator is out of stock", () => {
-    // A pin only applies when the pinned operator is actually sellable.
-    // With virtual28 out of stock, selection proceeds exactly as it did
-    // before the pin existed: apply ROUTE_RATE_FLOORS (30 for this
-    // route), then selectBestOperator over whatever survives.
-    const result = selectOperatorForRoute("usa", "whatsapp", {
-      virtual28: { cost: 1.9231, count: 0, rate: 50 },
       virtual8: { cost: 0.85, count: 100, rate: 10 },
-      virtual99: { cost: 1, count: 50, rate: 40 },
     });
 
-    expect(result?.operator).toBe("virtual99");
+    expect(result).toBeNull();
   });
 
-  it("does not apply the pin to a different product in the same country", () => {
-    // ROUTE_OPERATOR_PINS is keyed by (country, product) — usa/signal
-    // isn't pinned, so an in-stock virtual28 here must not win just
-    // because it happens to share a name with the pinned usa/whatsapp
-    // operator.
+  it("does not fall back to a below-floor operator on usa/telegram — returns null instead", () => {
+    const result = selectOperatorForRoute("usa", "telegram", {
+      virtual63: { cost: 0.55, count: 100, rate: 33.33 },
+      virtual51: { cost: 0.9, count: 100, rate: 34.72 },
+    });
+
+    expect(result).toBeNull();
+  });
+
+  it("still sells usa/whatsapp when an operator actually clears the standard 70 floor", () => {
+    const result = selectOperatorForRoute("usa", "whatsapp", {
+      virtual28: { cost: 1.9231, count: 100, rate: 20 },
+      virtualReliable: { cost: 2.5, count: 100, rate: 75 },
+    });
+
+    expect(result?.operator).toBe("virtualReliable");
+  });
+
+  it("does not apply the hard floor to a different product in the same country", () => {
+    // usa/signal isn't in HARD_RELIABILITY_FLOOR_ROUTES, so it keeps the
+    // normal fallback-to-cheapest-in-stock behavior.
     const result = selectOperatorForRoute("usa", "signal", {
       virtual28: { cost: 0.1, count: 10, rate: 5 },
-      virtual51: { cost: 0.05, count: 10, rate: 90 },
     });
 
-    expect(result?.operator).toBe("virtual51");
+    expect(result?.operator).toBe("virtual28");
   });
 
-  it("does not apply the pin to the same operator name in a different country", () => {
+  it("does not apply the hard floor to the same product in a different country", () => {
     const result = selectOperatorForRoute("canada", "whatsapp", {
       virtual28: { cost: 0.1, count: 10, rate: 5 },
-      virtual8: { cost: 0.05, count: 10, rate: 90 },
     });
 
-    expect(result?.operator).toBe("virtual8");
+    expect(result?.operator).toBe("virtual28");
   });
 });
 
-describe("getProductPrices — usa/whatsapp route floor + operator pin", () => {
+describe("getProductPrices — usa/whatsapp and usa/telegram hard reliability floor", () => {
   const originalFetch = global.fetch;
 
   afterEach(() => {
     global.fetch = originalFetch;
   });
 
-  it("pins usa/whatsapp to virtual28 through the full getProductPrices call, even though virtual8 is cheaper and in stock", async () => {
+  it("omits usa/whatsapp entirely through the full getProductPrices call when nothing on the route clears 70", async () => {
+    // Live shape this actually hit (2026-09-24): both in-stock operators
+    // well under the floor, refunding roughly half of orders sold through
+    // the old pin. No product entry at all now — computeCatalogPrices
+    // renders that as "price unavailable" and purchaseNumber 409s.
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
@@ -158,65 +181,8 @@ describe("getProductPrices — usa/whatsapp route floor + operator pin", () => {
           JSON.stringify({
             usa: {
               whatsapp: {
-                virtual8: { cost: 0.85, count: 7136, rate: 90 },
-                virtual28: { cost: 1.9231, count: 28871, rate: 49.52 },
-              },
-            },
-          }),
-        ),
-    } as Response);
-
-    const prices = await getProductPrices("usa");
-
-    expect(prices.whatsapp?.operator).toBe("virtual28");
-  });
-
-  it("still returns a product via the floor + fallback path when the pinned operator is out of stock and every remaining in-stock operator falls below the route floor", async () => {
-    // Real regression this route hit twice (Sept 2026): first with no pin
-    // at all, both in-stock operators (virtual28, virtual8) fell below the
-    // 30 floor at once and the product vanished from the catalog with no
-    // fallback. Now that virtual28 is pinned, the same fallback path still
-    // needs to work for the case where virtual28 itself is the one that's
-    // out of stock — the pin isn't a replacement for the floor/fallback
-    // mechanism, only a higher-precedence override of it.
-    global.fetch = vi.fn().mockResolvedValue({
-      ok: true,
-      status: 200,
-      text: () =>
-        Promise.resolve(
-          JSON.stringify({
-            usa: {
-              whatsapp: {
-                virtual28: { cost: 1.9231, count: 0, rate: 9.47 },
-                virtual51: { cost: 0.8974, count: 0 },
-                virtual63: { cost: 1.92, count: 0, rate: 7.41 },
-                virtual8: { cost: 0.85, count: 1254, rate: 2.76 },
-              },
-            },
-          }),
-        ),
-    } as Response);
-
-    const prices = await getProductPrices("usa");
-
-    expect(prices.whatsapp).toBeDefined();
-    expect(prices.whatsapp?.operator).toBe("virtual8");
-  });
-
-  it("still reports no price when a route-floored product has no stock at all, even after the fallback", async () => {
-    // The fallback must not fabricate availability that doesn't exist —
-    // it only widens the pool selectBestOperator chooses from, and
-    // selectBestOperator still returns null when nothing is in stock.
-    global.fetch = vi.fn().mockResolvedValue({
-      ok: true,
-      status: 200,
-      text: () =>
-        Promise.resolve(
-          JSON.stringify({
-            usa: {
-              whatsapp: {
-                virtual28: { cost: 1.9231, count: 0, rate: 9.47 },
-                virtual8: { cost: 0.85, count: 0, rate: 2.76 },
+                virtual8: { cost: 0.85, count: 165, rate: 0 },
+                virtual28: { cost: 1.9231, count: 25925, rate: 18.8 },
               },
             },
           }),
@@ -228,7 +194,54 @@ describe("getProductPrices — usa/whatsapp route floor + operator pin", () => {
     expect(prices.whatsapp).toBeUndefined();
   });
 
-  it("leaves virtual8 selectable for a country/product with no configured route floor", async () => {
+  it("omits usa/telegram entirely when nothing on the route clears 70, instead of selling through virtual63 as before", async () => {
+    // Live shape this actually hit (2026-09-24): every operator under 35%,
+    // refunding 6 of 7 orders sold via the un-floored general fallback.
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: () =>
+        Promise.resolve(
+          JSON.stringify({
+            usa: {
+              telegram: {
+                virtual63: { cost: 0.55, count: 1160, rate: 33.33 },
+                virtual51: { cost: 0.9, count: 8011, rate: 34.72 },
+                virtual8: { cost: 0.7692, count: 892, rate: 13.79 },
+              },
+            },
+          }),
+        ),
+    } as Response);
+
+    const prices = await getProductPrices("usa");
+
+    expect(prices.telegram).toBeUndefined();
+  });
+
+  it("still sells usa/whatsapp when an in-stock operator actually clears 70", async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: () =>
+        Promise.resolve(
+          JSON.stringify({
+            usa: {
+              whatsapp: {
+                virtual28: { cost: 1.9231, count: 100, rate: 18.8 },
+                virtualReliable: { cost: 2.5, count: 100, rate: 82 },
+              },
+            },
+          }),
+        ),
+    } as Response);
+
+    const prices = await getProductPrices("usa");
+
+    expect(prices.whatsapp?.operator).toBe("virtualReliable");
+  });
+
+  it("leaves a below-floor operator selectable for a country/product with no hard reliability floor configured", async () => {
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
