@@ -159,9 +159,23 @@ describe("selectOperatorForRoute — hard reliability floor on usa/whatsapp and 
 
     expect(result?.operator).toBe("virtual28");
   });
+
+  it("does not fall back to a below-floor operator on malaysia/whatsapp — returns null instead", () => {
+    // Added pre-emptively (2026-09-24): live shape at the time was
+    // virtual34 (only in-stock operator) at a 0% rate, virtual4/virtual51
+    // out of stock. No historical orders yet, but the same "one bad
+    // operator, no fallback protection" shape as the two usa routes.
+    const result = selectOperatorForRoute("malaysia", "whatsapp", {
+      virtual34: { cost: 1, count: 705654, rate: 0 },
+      virtual4: { cost: 0.2205, count: 0, rate: 4.35 },
+      virtual51: { cost: 0.2205, count: 0, rate: 0 },
+    });
+
+    expect(result).toBeNull();
+  });
 });
 
-describe("getProductPrices — usa/whatsapp and usa/telegram hard reliability floor", () => {
+describe("getProductPrices — usa/whatsapp, usa/telegram, and malaysia/whatsapp hard reliability floor", () => {
   const originalFetch = global.fetch;
 
   afterEach(() => {
@@ -239,6 +253,31 @@ describe("getProductPrices — usa/whatsapp and usa/telegram hard reliability fl
     const prices = await getProductPrices("usa");
 
     expect(prices.whatsapp?.operator).toBe("virtualReliable");
+  });
+
+  it("omits malaysia/whatsapp entirely when the only in-stock operator has a 0% rate", async () => {
+    // Live shape confirmed 2026-09-24 (see HARD_RELIABILITY_FLOOR_ROUTES'
+    // comment in client.ts) — added pre-emptively, before any refunds.
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: () =>
+        Promise.resolve(
+          JSON.stringify({
+            malaysia: {
+              whatsapp: {
+                virtual34: { cost: 1, count: 705654, rate: 0 },
+                virtual4: { cost: 0.2205, count: 0, rate: 4.35 },
+                virtual51: { cost: 0.2205, count: 0, rate: 0 },
+              },
+            },
+          }),
+        ),
+    } as Response);
+
+    const prices = await getProductPrices("malaysia");
+
+    expect(prices.whatsapp).toBeUndefined();
   });
 
   it("leaves a below-floor operator selectable for a country/product with no hard reliability floor configured", async () => {

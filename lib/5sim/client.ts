@@ -110,19 +110,29 @@ interface FiveSimGuestPricesResponse {
 // at a refund cost that made those orders net-negative even though the
 // pricing engine's margin on completed orders was correct.
 //
-// Scoped to just these two routes rather than changing the fallback
-// globally: every other product/country combo relies on that fallback to
-// stay sellable at all when 5sim's stock is thin, and hasn't shown this
-// failure pattern. usa/whatsapp and usa/telegram instead go fully
-// unavailable (computeCatalogPrices already renders that as "price
-// unavailable"; purchaseNumber already 409s with "not currently available
-// in <country>") whenever nothing on the route clears the standard 70%
-// floor, rather than silently selling a coin-flip number. Revisit
-// (loosen, extend to other routes, or remove) once
-// orders.fivesim_operator_rate has enough post-fix rows to show whether
-// 5sim's pool on these routes has actually improved.
+// Scoped to just these routes rather than changing the fallback globally:
+// every other product/country combo relies on that fallback to stay
+// sellable at all when 5sim's stock is thin, and hasn't shown this failure
+// pattern. Routes here instead go fully unavailable (computeCatalogPrices
+// already renders that as "price unavailable"; purchaseNumber already
+// 409s with "not currently available in <country>") whenever nothing on
+// the route clears the standard 70% floor, rather than silently selling a
+// coin-flip (or worse) number. Revisit (loosen, extend to other routes, or
+// remove) once orders.fivesim_operator_rate has enough post-fix rows to
+// show whether 5sim's pool on these routes has actually improved.
+//
+// malaysia/whatsapp added 2026-09-24: a pre-emptive add, not a reaction to
+// refunds — it has zero historical orders. Checked live because it shares
+// usa/whatsapp and usa/telegram's shape (one in-stock operator, well under
+// the floor): virtual34 is the only in-stock operator and its rate is 0%
+// across every window 5sim reports (rate1/rate3/rate24 all 0%); the other
+// two operators are out of stock. Without this entry, selectOperatorForRoute
+// would fall back to selling virtual34 anyway — worse than either usa
+// route was before its fix, just not yet reflected in refund data because
+// nobody has bought it yet.
 const HARD_RELIABILITY_FLOOR_ROUTES: Record<string, Set<string>> = {
   usa: new Set(["whatsapp", "telegram"]),
+  malaysia: new Set(["whatsapp"]),
 };
 
 // Reliability-first operator selection (confirmed rule — see
