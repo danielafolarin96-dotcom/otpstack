@@ -24,20 +24,37 @@
   --ink: #1a1a1a;
   --signal: #ff5a1f;
   --signal-bright: #ff7a45;
-  /* Text-only variant of --signal, light mode only. --signal itself is
-     2.89:1 against --paper and 3.12:1 against --paper-raised — both under
-     WCAG AA's 4.5:1 for normal text, confirmed by computed contrast check
-     (Oct 2026) after adding the theme toggle. --signal stays exactly as-is
-     for backgrounds/buttons/accents (e.g. bg-signal), where it's judged
-     against --paper-on-signal instead (also currently under 4.5:1 — a
-     separate, not-yet-addressed gap, since fixing it means changing button
-     text color, not this token). Use --signal-text (text-signal-text)
-     specifically wherever orange renders as readable text color: prices,
-     "View all" links, inline link text. #c2410c: 4.81:1 on --paper, 5.18:1
-     on --paper-raised. Dark mode doesn't need a separate value — dark
-     --signal already clears AA as text (7.15:1 / 6.55:1) — so the dark
-     blocks below just alias --signal-text back to --signal. */
+  /* --signal/--signal-bright stay exactly as before for non-text,
+     non-button accents (borders, rings, the checkbox accent-color, the
+     admin badge's bg-signal/15 tint) — those aren't judged against text
+     contrast rules the same way. Three light-mode-only tokens below exist
+     specifically because plain --signal measured under WCAG AA's 4.5:1 in
+     every text/button role it was actually used in (confirmed by computed
+     contrast check, Oct 2026, after adding the theme toggle); dark mode
+     never had this problem (dark --signal already clears AA everywhere:
+     7.15:1/6.55:1 as text, 7.15:1 as button text-on-bg), so all three
+     simply alias back to the existing dark values below rather than
+     getting their own dark variant. */
+
+  /* Text role: prices, "View all" links, inline link text. 4.81:1 on
+     --paper, 5.18:1 on --paper-raised (was 2.89:1 / 3.12:1 with --signal). */
   --signal-text: #c2410c;
+  /* Button background role, paired with unchanged text-paper button text.
+     Same hex as --signal-text above — not a coincidence, the contrast
+     formula is symmetric, so the value that clears 4.5:1 as text on
+     --paper clears the identical 4.5:1 as a background against
+     --paper-colored text — but kept as its own token rather than reusing
+     --signal-text directly so `bg-signal-button` in a className doesn't
+     read like a background accidentally using a "text" token. 4.81:1
+     (was 2.89:1 with plain bg-signal). */
+  --signal-button: #c2410c;
+  /* Shared darker hover tier — used both for text-signal-text's hover
+     (must get darker, not brighter, to stay >= its 4.81/5.18 resting
+     contrast — the old hover:text-signal-bright went lighter and was
+     actually worse, 2.40:1) and for bg-signal-button's hover (must stay
+     >= 4.5:1 against text-paper, same button background logic as above).
+     6.78:1 on --paper, 7.31:1 on --paper-raised either way. */
+  --signal-dark: #9a3412;
   --amber: #c97b12;
   --slate: #6b6357;
   --slate-dim: #948c7c;
@@ -86,9 +103,13 @@
     --ink: #fbf6ec;
     --signal: #ff7a45;
     --signal-bright: #ff9868;
-    /* Dark --signal already clears AA as text on its own — no darker
-       variant needed, so this just aliases back to it. */
+    /* Dark --signal/--signal-bright already clear AA in every role they're
+       used in — no darker variants needed, so all three just alias back
+       to the existing dark values, leaving dark-mode buttons and link
+       hover pixel-identical to before this fix. */
     --signal-text: var(--signal);
+    --signal-button: var(--signal);
+    --signal-dark: var(--signal-bright);
     --line: #3a3225;
     --text: #f3ecdd;
     --text-dim: #b8ac97;
@@ -107,6 +128,8 @@
   --signal: #ff7a45;
   --signal-bright: #ff9868;
   --signal-text: var(--signal);
+  --signal-button: var(--signal);
+  --signal-dark: var(--signal-bright);
   --line: #3a3225;
   --text: #f3ecdd;
   --text-dim: #b8ac97;
@@ -121,6 +144,8 @@
   --color-signal: var(--signal);
   --color-signal-bright: var(--signal-bright);
   --color-signal-text: var(--signal-text);
+  --color-signal-button: var(--signal-button);
+  --color-signal-dark: var(--signal-dark);
   --color-amber: var(--amber);
   --color-slate: var(--slate);
   --color-slate-dim: var(--slate-dim);

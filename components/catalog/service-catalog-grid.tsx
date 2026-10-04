@@ -200,7 +200,7 @@ export function ServiceCatalogGrid({
                     type="button"
                     disabled={Boolean(buyingServiceId)}
                     onClick={() => onBuy(service.id)}
-                    className="mt-1 w-full rounded-[10px] bg-signal px-3 py-1.5 text-xs font-semibold text-paper transition-colors hover:bg-signal-bright disabled:opacity-50"
+                    className="mt-1 w-full rounded-[10px] bg-signal-button px-3 py-1.5 text-xs font-semibold text-paper transition-colors hover:bg-signal-dark disabled:opacity-50"
                   >
                     {isBuying ? "Buying…" : "Buy"}
                   </button>
@@ -213,7 +213,7 @@ export function ServiceCatalogGrid({
 
       {previewCta && !isFiltering && available.length > displayed.length && (
         <p className="text-center text-sm text-text-dim">
-          <Link href={previewCta.href} className="font-semibold text-signal-text hover:text-signal-bright">
+          <Link href={previewCta.href} className="font-semibold text-signal-text hover:text-signal-dark">
             {previewCta.label}
           </Link>{" "}
           to browse all {available.length} services.

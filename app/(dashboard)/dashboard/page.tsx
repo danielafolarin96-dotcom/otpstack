@@ -106,7 +106,7 @@ export default async function OverviewPage() {
           <p className="font-display text-lg font-semibold text-ink">Quick buy</p>
           <Link
             href="/dashboard/get-a-number"
-            className="text-sm font-medium text-signal-text hover:text-signal-bright"
+            className="text-sm font-medium text-signal-text hover:text-signal-dark"
           >
             View all
           </Link>
@@ -142,7 +142,7 @@ export default async function OverviewPage() {
       <div className="flex flex-col gap-3">
         <div className="flex items-center justify-between">
           <p className="font-display text-lg font-semibold text-ink">Recent activity</p>
-          <Link href="/dashboard/wallet" className="text-sm font-medium text-signal-text hover:text-signal-bright">
+          <Link href="/dashboard/wallet" className="text-sm font-medium text-signal-text hover:text-signal-dark">
             View all
           </Link>
         </div>

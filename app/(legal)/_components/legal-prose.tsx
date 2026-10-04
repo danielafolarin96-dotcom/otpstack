@@ -23,7 +23,7 @@ export function LegalSection({
   return (
     <section className="flex flex-col gap-3 border-t border-line py-6 first:border-t-0 first:pt-0">
       <h2 className="font-display text-lg font-semibold text-ink">{heading}</h2>
-      <div className="flex flex-col gap-3 text-sm leading-relaxed text-text-dim [&_a]:text-signal-text [&_a:hover]:text-signal-bright [&_strong]:text-text [&_ul]:list-disc [&_ul]:pl-5 [&_ul]:flex [&_ul]:flex-col [&_ul]:gap-1.5">
+      <div className="flex flex-col gap-3 text-sm leading-relaxed text-text-dim [&_a]:text-signal-text [&_a:hover]:text-signal-dark [&_strong]:text-text [&_ul]:list-disc [&_ul]:pl-5 [&_ul]:flex [&_ul]:flex-col [&_ul]:gap-1.5">
         {children}
       </div>
     </section>

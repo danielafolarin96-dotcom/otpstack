@@ -85,7 +85,7 @@ export function ProfileForm({
       <button
         type="submit"
         disabled={loading}
-        className="self-start rounded-[10px] bg-signal px-4 py-2.5 text-sm font-semibold text-paper transition-colors hover:bg-signal-bright disabled:opacity-60"
+        className="self-start rounded-[10px] bg-signal-button px-4 py-2.5 text-sm font-semibold text-paper transition-colors hover:bg-signal-dark disabled:opacity-60"
       >
         {loading ? "Saving…" : "Save changes"}
       </button>

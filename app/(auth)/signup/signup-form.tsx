@@ -153,15 +153,15 @@ export function SignupForm() {
         />
         <span>
           I agree to the{" "}
-          <Link href="/terms" className="font-medium text-signal-text hover:text-signal-bright">
+          <Link href="/terms" className="font-medium text-signal-text hover:text-signal-dark">
             Terms of Service
           </Link>
           ,{" "}
-          <Link href="/acceptable-use" className="font-medium text-signal-text hover:text-signal-bright">
+          <Link href="/acceptable-use" className="font-medium text-signal-text hover:text-signal-dark">
             Acceptable Use Policy
           </Link>
           , and{" "}
-          <Link href="/privacy" className="font-medium text-signal-text hover:text-signal-bright">
+          <Link href="/privacy" className="font-medium text-signal-text hover:text-signal-dark">
             Privacy Policy
           </Link>
           .
@@ -173,7 +173,7 @@ export function SignupForm() {
       <button
         type="submit"
         disabled={loading}
-        className="mt-2 rounded-[10px] bg-signal px-4 py-2.5 text-sm font-semibold text-paper transition-colors hover:bg-signal-bright disabled:opacity-60"
+        className="mt-2 rounded-[10px] bg-signal-button px-4 py-2.5 text-sm font-semibold text-paper transition-colors hover:bg-signal-dark disabled:opacity-60"
       >
         {loading ? "Creating account…" : "Create account"}
       </button>

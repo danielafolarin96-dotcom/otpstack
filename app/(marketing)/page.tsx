@@ -92,7 +92,7 @@ export default async function Home() {
           </Link>
           <Link
             href="/signup"
-            className="rounded-[10px] bg-signal px-4 py-2 text-sm font-semibold text-paper transition-colors hover:bg-signal-bright"
+            className="rounded-[10px] bg-signal-button px-4 py-2 text-sm font-semibold text-paper transition-colors hover:bg-signal-dark"
           >
             Create account
           </Link>
