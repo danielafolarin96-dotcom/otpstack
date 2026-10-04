@@ -120,7 +120,7 @@ export function DashboardAppSearch({ entries, countryId }: { entries: CatalogEnt
                 className="flex w-full items-center justify-between gap-3 rounded-[10px] px-3 py-2 text-left transition-colors hover:bg-paper"
               >
                 <span className="text-sm font-medium text-text">{service.name}</span>
-                <span className="font-technical text-sm text-signal">
+                <span className="font-technical text-sm text-signal-text">
                   ₦{formatNairaWhole(price.priceKobo)}
                 </span>
               </button>

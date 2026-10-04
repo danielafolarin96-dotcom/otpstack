@@ -24,6 +24,20 @@
   --ink: #1a1a1a;
   --signal: #ff5a1f;
   --signal-bright: #ff7a45;
+  /* Text-only variant of --signal, light mode only. --signal itself is
+     2.89:1 against --paper and 3.12:1 against --paper-raised — both under
+     WCAG AA's 4.5:1 for normal text, confirmed by computed contrast check
+     (Oct 2026) after adding the theme toggle. --signal stays exactly as-is
+     for backgrounds/buttons/accents (e.g. bg-signal), where it's judged
+     against --paper-on-signal instead (also currently under 4.5:1 — a
+     separate, not-yet-addressed gap, since fixing it means changing button
+     text color, not this token). Use --signal-text (text-signal-text)
+     specifically wherever orange renders as readable text color: prices,
+     "View all" links, inline link text. #c2410c: 4.81:1 on --paper, 5.18:1
+     on --paper-raised. Dark mode doesn't need a separate value — dark
+     --signal already clears AA as text (7.15:1 / 6.55:1) — so the dark
+     blocks below just alias --signal-text back to --signal. */
+  --signal-text: #c2410c;
   --amber: #c97b12;
   --slate: #6b6357;
   --slate-dim: #948c7c;
@@ -72,6 +86,9 @@
     --ink: #fbf6ec;
     --signal: #ff7a45;
     --signal-bright: #ff9868;
+    /* Dark --signal already clears AA as text on its own — no darker
+       variant needed, so this just aliases back to it. */
+    --signal-text: var(--signal);
     --line: #3a3225;
     --text: #f3ecdd;
     --text-dim: #b8ac97;
@@ -89,6 +106,7 @@
   --ink: #fbf6ec;
   --signal: #ff7a45;
   --signal-bright: #ff9868;
+  --signal-text: var(--signal);
   --line: #3a3225;
   --text: #f3ecdd;
   --text-dim: #b8ac97;
@@ -102,6 +120,7 @@
   --color-ink: var(--ink);
   --color-signal: var(--signal);
   --color-signal-bright: var(--signal-bright);
+  --color-signal-text: var(--signal-text);
   --color-amber: var(--amber);
   --color-slate: var(--slate);
   --color-slate-dim: var(--slate-dim);

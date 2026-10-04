@@ -26,7 +26,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
     <div className="flex flex-1">
       <aside className="flex w-64 shrink-0 flex-col gap-8 border-r border-line bg-paper-raised px-4 py-6">
         <span className="px-2 font-display text-xl font-bold text-ink">
-          OtpStack <span className="text-signal">Admin</span>
+          OtpStack <span className="text-signal-text">Admin</span>
         </span>
         <nav className="flex flex-col gap-1">
           <Link

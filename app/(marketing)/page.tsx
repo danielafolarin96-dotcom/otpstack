@@ -156,7 +156,7 @@ export default async function Home() {
           <div className="grid grid-cols-1 gap-5 sm:grid-cols-3">
             {PROCESS_STEPS.map((step) => (
               <div key={step.n} className="rounded-[14px] border border-line bg-paper-raised p-5">
-                <div className="mb-2.5 font-technical text-xs text-signal">{step.n}</div>
+                <div className="mb-2.5 font-technical text-xs text-signal-text">{step.n}</div>
                 <h3 className="mb-1.5 text-base font-bold text-ink">{step.title}</h3>
                 <p className="text-sm leading-relaxed text-text-dim">{step.body}</p>
               </div>

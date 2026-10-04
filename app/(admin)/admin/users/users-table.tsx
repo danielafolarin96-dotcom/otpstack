@@ -41,7 +41,7 @@ export function UsersTable({ users }: { users: AdminUserRow[] }) {
                   <span className="flex items-center gap-2 text-text">
                     {user.full_name || user.username}
                     {user.is_admin && (
-                      <span className="rounded-full bg-signal/15 px-2 py-0.5 text-xs font-medium text-signal">
+                      <span className="rounded-full bg-signal/15 px-2 py-0.5 text-xs font-medium text-signal-text">
                         Admin
                       </span>
                     )}

@@ -153,15 +153,15 @@ export function SignupForm() {
         />
         <span>
           I agree to the{" "}
-          <Link href="/terms" className="font-medium text-signal hover:text-signal-bright">
+          <Link href="/terms" className="font-medium text-signal-text hover:text-signal-bright">
             Terms of Service
           </Link>
           ,{" "}
-          <Link href="/acceptable-use" className="font-medium text-signal hover:text-signal-bright">
+          <Link href="/acceptable-use" className="font-medium text-signal-text hover:text-signal-bright">
             Acceptable Use Policy
           </Link>
           , and{" "}
-          <Link href="/privacy" className="font-medium text-signal hover:text-signal-bright">
+          <Link href="/privacy" className="font-medium text-signal-text hover:text-signal-bright">
             Privacy Policy
           </Link>
           .

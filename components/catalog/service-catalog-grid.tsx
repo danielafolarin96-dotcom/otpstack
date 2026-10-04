@@ -192,7 +192,7 @@ export function ServiceCatalogGrid({
                   iconIsNearWhite={service.iconIsNearWhite}
                 />
                 <p className="text-sm font-medium text-text">{service.name}</p>
-                <p className="font-technical text-sm text-signal">
+                <p className="font-technical text-sm text-signal-text">
                   Get {service.name} from ₦{formatNairaWhole(price.priceKobo)}
                 </p>
                 {onBuy && (
@@ -213,7 +213,7 @@ export function ServiceCatalogGrid({
 
       {previewCta && !isFiltering && available.length > displayed.length && (
         <p className="text-center text-sm text-text-dim">
-          <Link href={previewCta.href} className="font-semibold text-signal hover:text-signal-bright">
+          <Link href={previewCta.href} className="font-semibold text-signal-text hover:text-signal-bright">
             {previewCta.label}
           </Link>{" "}
           to browse all {available.length} services.

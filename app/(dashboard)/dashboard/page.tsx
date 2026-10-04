@@ -106,7 +106,7 @@ export default async function OverviewPage() {
           <p className="font-display text-lg font-semibold text-ink">Quick buy</p>
           <Link
             href="/dashboard/get-a-number"
-            className="text-sm font-medium text-signal hover:text-signal-bright"
+            className="text-sm font-medium text-signal-text hover:text-signal-bright"
           >
             View all
           </Link>
@@ -123,7 +123,7 @@ export default async function OverviewPage() {
                   {service.name.charAt(0)}
                 </div>
                 <p className="text-sm font-medium text-text">{service.name}</p>
-                <p className="font-technical text-sm text-signal">
+                <p className="font-technical text-sm text-signal-text">
                   {price
                     ? `₦${(price.priceKobo / 100).toLocaleString("en-NG", { minimumFractionDigits: 2 })}`
                     : "—"}
@@ -142,7 +142,7 @@ export default async function OverviewPage() {
       <div className="flex flex-col gap-3">
         <div className="flex items-center justify-between">
           <p className="font-display text-lg font-semibold text-ink">Recent activity</p>
-          <Link href="/dashboard/wallet" className="text-sm font-medium text-signal hover:text-signal-bright">
+          <Link href="/dashboard/wallet" className="text-sm font-medium text-signal-text hover:text-signal-bright">
             View all
           </Link>
         </div>
