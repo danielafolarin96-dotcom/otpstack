@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { ThemeToggle } from "@/components/theme-toggle";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { computeCatalogPrices, fetchActiveCountries } from "@/lib/pricing/catalog";
 import { fetchLatestFxRate } from "@/lib/pricing/engine";
@@ -82,6 +83,7 @@ export default async function Home() {
       <header className="mx-auto flex w-full max-w-[1080px] items-center justify-between px-5 py-6">
         <span className="font-display text-xl font-bold text-ink">OtpStack</span>
         <nav className="flex items-center gap-3">
+          <ThemeToggle />
           <Link
             href="/login"
             className="rounded-[10px] px-4 py-2 text-sm font-medium text-text hover:text-ink"

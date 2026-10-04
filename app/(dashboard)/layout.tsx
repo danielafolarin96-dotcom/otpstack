@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { ThemeToggle } from "@/components/theme-toggle";
 import { DashboardNav } from "./dashboard-nav";
 import { MobileNavMenu } from "./mobile-nav-menu";
 import { SignOutButton } from "./sign-out-button";
@@ -32,10 +33,19 @@ export default async function DashboardLayout({
             OtpStack
           </span>
           <DashboardNav isAdmin={profile?.is_admin ?? false} />
-          <MobileNavMenu isAdmin={profile?.is_admin ?? false} />
+          {/* Mobile-only pairing — ThemeToggle gets its own, separate
+              desktop placement below next to SignOutButton, mirroring how
+              DashboardNav/MobileNavMenu already split by breakpoint in
+              this file rather than one element trying to reflow into both
+              layouts. */}
+          <div className="flex items-center gap-1 md:hidden">
+            <ThemeToggle />
+            <MobileNavMenu isAdmin={profile?.is_admin ?? false} />
+          </div>
         </div>
-        <div className="hidden md:block">
+        <div className="hidden items-center justify-between gap-2 md:flex">
           <SignOutButton />
+          <ThemeToggle />
         </div>
       </aside>
       <main className="flex-1 px-5 py-6 md:px-8 md:py-8">{children}</main>

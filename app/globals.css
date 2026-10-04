@@ -1,7 +1,19 @@
 @import "tailwindcss";
 
 /* Color tokens — see DESIGN.md. Light is the default; dark mirrors the same
-   roles (not a naive invert) under prefers-color-scheme. */
+   roles (not a naive invert). Three ways a visitor can end up in dark mode,
+   all handled below:
+     1. System preference, no stored choice — the plain
+        `prefers-color-scheme` block.
+     2. Explicit "dark" choice (ThemeToggle, see components/theme-toggle.tsx)
+        — the `[data-theme="dark"]` block, which must win even when the
+        system preference is light, so it's unguarded and simply comes
+        after dark remains in source order.
+     3. Explicit "light" choice while the system itself prefers dark — the
+        `:not([data-theme="light"])` guard on the system-preference block
+        below prevents it from re-applying dark tokens over that choice.
+   app/layout.tsx's bootstrap script sets `data-theme` on <html> before
+   paint specifically so none of this can flash the wrong theme in first. */
 :root {
   --paper: #fbf6ec;
   --paper-raised: #ffffff;
@@ -47,7 +59,14 @@
 }
 
 @media (prefers-color-scheme: dark) {
-  :root {
+  /* :not([data-theme="light"]) — an explicit light override (point 3
+     above) must beat this, even though both are plain :root selectors of
+     equal specificity; without the guard, source order alone would let
+     this media-queried block win over an earlier unguarded
+     :root[data-theme="light"] rule since @media blocks are evaluated
+     after the rules that precede them regardless of selector specificity
+     ties. */
+  :root:not([data-theme="light"]) {
     --paper: #17130d;
     --paper-raised: #211c14;
     --ink: #fbf6ec;
@@ -59,6 +78,22 @@
     --good: #35c98a;
     --danger: #e9715a;
   }
+}
+
+/* Explicit "dark" choice — wins regardless of system preference (point 2
+   above). Same values as the media-queried block; duplicated rather than
+   shared because this one must apply with no @media condition at all. */
+:root[data-theme="dark"] {
+  --paper: #17130d;
+  --paper-raised: #211c14;
+  --ink: #fbf6ec;
+  --signal: #ff7a45;
+  --signal-bright: #ff9868;
+  --line: #3a3225;
+  --text: #f3ecdd;
+  --text-dim: #b8ac97;
+  --good: #35c98a;
+  --danger: #e9715a;
 }
 
 @theme inline {
