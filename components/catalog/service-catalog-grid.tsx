@@ -85,18 +85,28 @@ function ServiceLogo({
 // visitor searching for a real, available service must find it, never a
 // silent "No matches" just because it fell outside the teaser slice. Omit
 // both on the dashboard's authenticated grid, where there's no cap at all.
+//
+// initialQuery: seeds the search input on mount — used by the dashboard
+// overview's "Search apps" box (app/(dashboard)/dashboard/app-search.tsx),
+// which navigates here with ?q=<service name> so a tap lands pre-filtered
+// to that one service instead of the full, unfiltered grid. Only read once
+// (useState's initializer): this page's own CountrySelect preserves `q`
+// across a country switch by carrying the existing search params forward,
+// so there's no later prop change for this component to react to.
 export function ServiceCatalogGrid({
   entries,
   onBuy,
   buyingServiceId,
   previewLimit,
   previewCta,
+  initialQuery,
 }: {
   entries: CatalogGridEntry[];
   onBuy?: (serviceId: string) => void;
   buyingServiceId?: string | null;
   previewLimit?: number;
   previewCta?: { label: string; href: string };
+  initialQuery?: string;
 }) {
   // Hidden for now rather than shown as a disabled/greyed tile — at the
   // full catalog scale (Stage 4: 722 services x 80 countries) most
@@ -111,7 +121,7 @@ export function ServiceCatalogGrid({
     return ["All", ...Array.from(set).sort()];
   }, [available]);
   const [active, setActive] = useState("All");
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState(initialQuery ?? "");
 
   const normalizedQuery = query.trim().toLowerCase();
 

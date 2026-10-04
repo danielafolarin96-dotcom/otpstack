@@ -7,9 +7,9 @@ import { BuyableCatalogGrid } from "./buyable-catalog-grid";
 export default async function GetANumberPage({
   searchParams,
 }: {
-  searchParams: Promise<{ country?: string }>;
+  searchParams: Promise<{ country?: string; q?: string }>;
 }) {
-  const { country } = await searchParams;
+  const { country, q } = await searchParams;
   const admin = createAdminClient();
   const countries = await fetchActiveCountries(admin);
 
@@ -42,7 +42,7 @@ export default async function GetANumberPage({
         <CountrySelect countries={countries} selectedId={selectedCountryId} />
       </div>
 
-      <BuyableCatalogGrid entries={entries} countryId={selectedCountryId} />
+      <BuyableCatalogGrid entries={entries} countryId={selectedCountryId} initialQuery={q} />
     </div>
   );
 }

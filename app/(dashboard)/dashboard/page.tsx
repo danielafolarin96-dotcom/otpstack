@@ -5,6 +5,7 @@ import { computeCatalogPrices, fetchActiveCountries } from "@/lib/pricing/catalo
 import { EmptyState } from "./_components/empty-state";
 import { TransactionsTable } from "./wallet/transactions-table";
 import { ActiveNumberPanel, type ActiveOrder } from "./active-number-panel";
+import { DashboardAppSearch } from "./app-search";
 
 const QUICK_BUY_COUNT = 4;
 
@@ -67,9 +68,11 @@ export default async function OverviewPage() {
   const balanceKobo = wallet?.balance_kobo ?? 0;
 
   const defaultCountry = countries.find((c) => c.name === "Nigeria") ?? countries[0];
-  const quickBuy = defaultCountry
-    ? (await computeCatalogPrices(admin, defaultCountry.id)).slice(0, QUICK_BUY_COUNT)
-    : [];
+  // Quick buy only ever showed the first QUICK_BUY_COUNT of this — kept as
+  // the full list here too so the search box below can search the entire
+  // priced catalog for defaultCountry, not just that teaser slice.
+  const allEntries = defaultCountry ? await computeCatalogPrices(admin, defaultCountry.id) : [];
+  const quickBuy = allEntries.slice(0, QUICK_BUY_COUNT);
 
   return (
     <div className="flex flex-col gap-6">
@@ -93,6 +96,10 @@ export default async function OverviewPage() {
 
         <ActiveNumberPanel key={activeOrder?.id ?? "none"} order={activeOrder} />
       </div>
+
+      {defaultCountry && allEntries.length > 0 && (
+        <DashboardAppSearch entries={allEntries} countryId={defaultCountry.id} />
+      )}
 
       <div className="flex flex-col gap-3">
         <div className="flex items-center justify-between">
