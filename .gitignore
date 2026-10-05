@@ -41,5 +41,12 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
-.vercel
-.env*
+# local one-off reports (never committed)
+/reports
+
+# Claude Code tooling (installed skills, scheduled-task state, ad-hoc output
+# files) — not application source, never committed.
+/.agents
+/.claude
+/Claude outputs
+/skills-lock.json
