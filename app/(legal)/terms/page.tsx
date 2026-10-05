@@ -8,7 +8,7 @@ export const metadata: Metadata = { title: "Terms of Service — OtpStack" };
 export default function TermsPage() {
   return (
     <>
-      <LegalTitle title="Terms of Service" updatedAt="11 September 2026" />
+      <LegalTitle title="Terms of Service" updatedAt="5 October 2026" />
 
       <LegalSection heading="1. Acceptance">
         <p>
@@ -54,10 +54,10 @@ export default function TermsPage() {
         <ul>
           <li>Prices are shown before purchase and are debited from your wallet at time of purchase.</li>
           <li>
-            Once purchased, a number is held for you for 10 minutes. If no verification code arrives
+            Once purchased, a number is held for you for 3 minutes. If no verification code arrives
             in that window, the order is automatically cancelled and refunded in full to your wallet.
           </li>
-          <li>You can cancel a still-pending order yourself before the 10 minutes are up for the same refund.</li>
+          <li>You can cancel a still-pending order yourself before the 3 minutes are up for the same refund.</li>
           <li>
             Once a code has been delivered, the purchase is complete and non-refundable — we have no
             control over whether the third-party service you&apos;re verifying with accepts the code.

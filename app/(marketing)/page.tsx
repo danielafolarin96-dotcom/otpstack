@@ -28,7 +28,7 @@ const PROCESS_STEPS = [
   {
     n: "03",
     title: "Receive your code",
-    body: "Number is yours for 10 minutes. No code in time, you're refunded automatically.",
+    body: "Number is yours for 3 minutes. No code in time, you're refunded automatically.",
   },
 ];
 
@@ -200,7 +200,7 @@ export default async function Home() {
                 <div className="text-[11.5px] uppercase tracking-[0.06em] text-slate-dim">
                   Hold window
                 </div>
-                <div className="mt-1 font-technical text-lg font-bold text-ink">10:00</div>
+                <div className="mt-1 font-technical text-lg font-bold text-ink">3:00</div>
               </div>
               {usdNgnRate !== null && (
                 <div className="min-w-[110px]">

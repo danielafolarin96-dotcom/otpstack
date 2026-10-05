@@ -4,8 +4,29 @@ import type { Database } from "@/types/database";
 import { buyActivation, cancelOrder, customerFacingPurchaseErrorMessage, getOperatorPrices } from "@/lib/5sim/client";
 import { fetchAllPricingRules, fetchLatestFxRate, priceFromRulesAndRate } from "@/lib/pricing/engine";
 import { computeFeeKobo, fetchActiveFeeSchedule } from "@/lib/finance/fee-schedule";
+import { scheduleOrderExpiry } from "@/lib/qstash/client";
 
-const ORDER_TTL_MINUTES = 10;
+// Shortened from 10 (Sept 2026) — deliberate product decision, not a
+// default: 5sim's own no-SMS auto-timeout is ~5 minutes (ARCHITECTURE.md's
+// cancel-window note), so a 10-minute customer-facing hold was always
+// longer than 5sim would actually wait, meaning a refund issued near the
+// end of that window almost never recovered the upstream cost (see
+// lib/orders/expire-and-refund.ts's comment). 3 minutes leaves roughly 2
+// minutes of headroom under that ~5-minute window for the QStash callback
+// this purchase schedules below (see scheduleOrderExpiry) to actually land
+// a cancel call in time, after accounting for QStash delivery latency and
+// the fact that "5 minute" in 5sim's own docs is prose, not a guaranteed
+// precise SLA.
+const ORDER_TTL_MINUTES = 3;
+// Padding added to the QStash callback's delay (not to the TTL/expires_at
+// itself): the cron route's query is `lt("expires_at", now())` at the
+// moment the callback lands — scheduling the callback for exactly TTL
+// would race that check if QStash fires even slightly early (clock skew,
+// delivery jitter), making expires_at <= now() and silently skipping the
+// order until a later backstop sweep catches it. 10s is comfortably past
+// any observed QStash delivery jitter without meaningfully eating into the
+// ~5-minute upstream cancel window (see this constant's comment above).
+const QSTASH_CALLBACK_PADDING_SECONDS = 10;
 // SECURITY.md's rate-limiting example for purchase: "a cap on concurrent
 // active/pending orders" — distinct from the time-windowed limits in
 // app/api/orders/route.ts, this bounds how many numbers one user can be
@@ -207,6 +228,22 @@ export async function purchaseNumber(
         : "Failed to record the purchase — it was reversed",
       message.includes("negative") ? 402 : 500,
     );
+  }
+
+  // Best-effort, non-blocking of the response below (same pattern as
+  // safeCancelUpstream) — schedules the one-shot callback that's meant to
+  // actually land the upstream cancel inside 5sim's cancel window (see
+  // ORDER_TTL_MINUTES' comment above and lib/qstash/client.ts). If this
+  // fails, the order isn't lost — the unchanged GitHub Actions/daily-cron
+  // backstops still eventually sweep it, just slower. scheduleOrderExpiry
+  // already catches its own errors internally and never throws, but the
+  // promise this makes ("never blocks the purchase response") is
+  // important enough to hold here too, not just trust that implementation
+  // detail.
+  try {
+    await scheduleOrderExpiry(order.id, ORDER_TTL_MINUTES * 60 + QSTASH_CALLBACK_PADDING_SECONDS);
+  } catch (err) {
+    console.error(`Failed to schedule expiry callback for order ${order.id}:`, err);
   }
 
   return {

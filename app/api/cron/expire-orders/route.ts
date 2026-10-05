@@ -2,9 +2,12 @@ import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { expireAndRefundOrder } from "@/lib/orders/expire-and-refund";
 
-// Per ARCHITECTURE.md's order lifecycle step 5 (10-minute TTL). Auth here
-// checks `Authorization: Bearer $CRON_SECRET`, Vercel's documented pattern
-// for securing cron routes.
+// Per ARCHITECTURE.md's order lifecycle step 5 (3-minute TTL — see
+// lib/orders/purchase.ts's ORDER_TTL_MINUTES). Auth here checks
+// `Authorization: Bearer $CRON_SECRET`, Vercel's documented pattern for
+// securing cron routes — also what lib/qstash/client.ts forwards to this
+// same route for its one-shot per-order callback (see the orderId param
+// below).
 //
 // Trigger sources, layered (all safe to overlap — expireAndRefundOrder's
 // `eq("status", "pending")` claim means only one caller ever wins a given
@@ -32,11 +35,23 @@ export async function GET(request: Request) {
   }
 
   const admin = createAdminClient();
-  const { data: expiredOrders, error } = await admin
-    .from("orders")
-    .select("*")
-    .eq("status", "pending")
-    .lt("expires_at", new Date().toISOString());
+  // ?orderId= — set by lib/qstash/client.ts's scheduleOrderExpiry, which
+  // schedules one of these calls per order at exactly purchase_time + TTL
+  // (see lib/orders/purchase.ts). Scopes this sweep to that one row
+  // instead of every expired order, so a QStash-triggered call never waits
+  // behind other orders' cancel calls the way the whole-sweep path below
+  // (still used by the GitHub Actions/daily-cron backstops, unchanged)
+  // does when several orders expire in the same window. Still requires
+  // status='pending' and past expires_at — same atomic claim as the
+  // whole-sweep path, just scoped to one id.
+  const { searchParams } = new URL(request.url);
+  const orderId = searchParams.get("orderId");
+
+  let query = admin.from("orders").select("*").eq("status", "pending").lt("expires_at", new Date().toISOString());
+  if (orderId) {
+    query = query.eq("id", orderId);
+  }
+  const { data: expiredOrders, error } = await query;
 
   if (error) {
     console.error("Failed to fetch expired orders:", error);
@@ -62,3 +77,14 @@ export async function GET(request: Request) {
 
   return NextResponse.json(results);
 }
+
+// QStash's `publishJSON` delivers via HTTP POST by default (confirmed
+// against the installed @upstash/qstash SDK: `method = "POST"` is its
+// hardcoded default, and neither lib/qstash/client.ts's scheduleOrderExpiry
+// nor this route's GitHub Actions/daily-cron callers override it) — so the
+// one-shot per-order callback that function schedules hits this route as a
+// POST, not a GET. Sharing the same handler keeps every trigger source
+// (GitHub Actions and the daily Vercel cron both call with GET; QStash
+// calls with POST) working off one code path rather than duplicating the
+// sweep logic.
+export const POST = GET;

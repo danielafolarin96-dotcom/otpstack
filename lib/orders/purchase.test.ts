@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/types/database";
 import { buyActivation, cancelOrder, FiveSimError, getOperatorPrices } from "@/lib/5sim/client";
+import { scheduleOrderExpiry } from "@/lib/qstash/client";
 import { PurchaseError, purchaseNumber } from "./purchase";
 
 vi.mock("@/lib/5sim/client", async () => {
@@ -11,6 +12,11 @@ vi.mock("@/lib/5sim/client", async () => {
   // it away.
   return { ...actual, buyActivation: vi.fn(), cancelOrder: vi.fn(), getOperatorPrices: vi.fn() };
 });
+
+// Real scheduleOrderExpiry would construct an actual QStash client and
+// attempt a real network call — mocked so these tests never depend on
+// network access or real credentials.
+vi.mock("@/lib/qstash/client", () => ({ scheduleOrderExpiry: vi.fn() }));
 
 const SERVICE = {
   id: "service-1",
@@ -168,6 +174,26 @@ describe("purchaseNumber", () => {
       }),
     );
     expect(cancelOrder).not.toHaveBeenCalled();
+  });
+
+  it("schedules a QStash expiry callback for the TTL plus a 10s pad, after the order is created — the blocker fix's actual trigger", async () => {
+    const client = fakeAdminClient(baseConfigs(), baseRpcResult());
+
+    await purchaseNumber(client, purchaseParams());
+
+    // 3-minute TTL (see purchase.ts's ORDER_TTL_MINUTES comment) in seconds,
+    // plus the 10s QSTASH_CALLBACK_PADDING_SECONDS pad so the callback never
+    // fires before expires_at and gets skipped by the cron route's query.
+    expect(scheduleOrderExpiry).toHaveBeenCalledWith("order-1", 190);
+  });
+
+  it("still returns the purchase result even when scheduling the expiry callback fails — best-effort, never blocks the response", async () => {
+    vi.mocked(scheduleOrderExpiry).mockRejectedValue(new Error("qstash unreachable"));
+    const client = fakeAdminClient(baseConfigs(), baseRpcResult());
+
+    const result = await purchaseNumber(client, purchaseParams());
+
+    expect(result.order.id).toBe("order-1");
   });
 
   it("picks the chosen operator out of several options, not just the first one", async () => {

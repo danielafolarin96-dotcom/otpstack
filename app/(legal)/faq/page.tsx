@@ -27,7 +27,7 @@ export default function FaqPage() {
 
       <LegalSection heading="How long do I have to receive my code?">
         <p>
-          10 minutes from the moment you buy a number. Your dashboard shows a live countdown while
+          3 minutes from the moment you buy a number. Your dashboard shows a live countdown while
           it&apos;s active.
         </p>
       </LegalSection>
