@@ -52,6 +52,12 @@ async function fiveSimFetch(path_, apiKey) {
   return JSON.parse(body);
 }
 
+// STALE as of the operator-choice buy-flow change: lib/5sim/client.ts's
+// real operator selection is now rankOperators (20% floor, customer
+// picks), not this inlined copy of the old 70%-floor auto-pick. Left
+// as-is here since this is a one-off ops script, not part of the request
+// path — just don't trust this function's output to match what the app
+// actually sells anymore.
 function selectBestOperator(operators) {
   const inStock = Object.entries(operators)
     .filter(([, p]) => p.count > 0)

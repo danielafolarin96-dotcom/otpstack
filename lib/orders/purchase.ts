@@ -1,7 +1,7 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/types/database";
-import { buyActivation, cancelOrder, customerFacingPurchaseErrorMessage, getProductPrices } from "@/lib/5sim/client";
+import { buyActivation, cancelOrder, customerFacingPurchaseErrorMessage, getOperatorPrices } from "@/lib/5sim/client";
 import { fetchAllPricingRules, fetchLatestFxRate, priceFromRulesAndRate } from "@/lib/pricing/engine";
 import { computeFeeKobo, fetchActiveFeeSchedule } from "@/lib/finance/fee-schedule";
 
@@ -51,7 +51,7 @@ async function safeCancelUpstream(fivesimOrderId: number) {
 // the re-validation ARCHITECTURE.md's pricing engine step 6 calls for.
 export async function purchaseNumber(
   admin: SupabaseClient<Database>,
-  params: { userId: string; serviceId: string; countryId: string },
+  params: { userId: string; serviceId: string; countryId: string; operator: string },
 ): Promise<PurchaseResult> {
   // Freeze check first, before any 5sim call or DB write — a frozen
   // account shouldn't even trigger the upstream price lookup. Only blocks
@@ -92,10 +92,24 @@ export async function purchaseNumber(
   if (!service) throw new PurchaseError("Service not found or inactive", 404);
   if (!country) throw new PurchaseError("Country not found or inactive", 404);
 
-  const productPrices = await getProductPrices(country.fivesim_country_code);
-  const upstreamProduct = productPrices[service.fivesim_product_code];
+  // Re-validates the customer's chosen operator against a fresh 5sim fetch
+  // rather than trusting whatever was displayed when they opened the
+  // picker — stock/rate can shift in the moments between fetching options
+  // and confirming a purchase, same "never trust a client-supplied price"
+  // rule this function already applied to price, now extended to the
+  // operator choice itself. A chosen operator that's dropped out of the
+  // ranked list (out of stock, or its rate fell below
+  // MIN_ACCEPTABLE_RATE — see lib/5sim/client.ts's rankOperators) is
+  // rejected rather than silently substituted for a different one; the
+  // client's job on a 409 here is to re-fetch the options and let the
+  // customer choose again, not to retry blindly.
+  const { options } = await getOperatorPrices(country.fivesim_country_code, service.fivesim_product_code);
+  const upstreamProduct = options.find((option) => option.operator === params.operator);
   if (!upstreamProduct) {
-    throw new PurchaseError(`${service.name} is not currently available in ${country.name}`, 409);
+    throw new PurchaseError(
+      `That operator is no longer available for ${service.name} in ${country.name} — please choose another.`,
+      409,
+    );
   }
 
   const [allRules, fxRate, feeSchedule] = await Promise.all([
@@ -172,10 +186,11 @@ export async function purchaseNumber(
     p_upstream_cost_kobo: upstreamCostKobo,
     p_expires_at: expiresAt,
     p_metadata: { fivesim_order_id: fivesimOrder.id, service: service.name, country: country.name },
-    // Captured for the reliability-floor question in lib/5sim/client.ts
-    // (MIN_ACCEPTABLE_DELIVERY_RATE) — lets a future pass join actual order
-    // outcomes (sms_received vs expired/cancelled) against the operator's
-    // rate at purchase time instead of guessing at a floor.
+    // The customer's chosen operator (re-validated above, see
+    // getOperatorPrices) and its rate at purchase time — also what lets
+    // margin-report.ts and future passes join actual order outcomes
+    // (sms_received vs expired/cancelled) against the rate shown when the
+    // customer picked it.
     p_fivesim_operator: upstreamProduct.operator,
     p_fivesim_operator_rate: upstreamProduct.rate,
     p_payment_fee_kobo: paymentFeeKobo,

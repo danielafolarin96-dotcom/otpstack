@@ -12,29 +12,6 @@ import "server-only";
 // not a direct observation.
 const BASE_URL = "https://5sim.net/v1";
 
-// Minimum overall delivery success rate (5sim's per-operator `rate` field,
-// a percentage) an operator must clear to be picked by getProductPrices.
-// Originally 50, justified by exactly one diagnostic (Sept 2026): a
-// TikTok/USA purchase from the cheapest operator (45% rate) never
-// delivered its code, while a slightly pricier operator (80% rate) on the
-// same product/country delivered cleanly. That's a thin basis for a real
-// number, and a low floor plausibly let through operators unlikely to ever
-// deliver an SMS — timing the order out regardless of expiry-sweep speed
-// (see lib/orders/expire-and-refund.ts and that change's commit message).
-//
-// Raised to 70 (Sept 2026) as a conservative interim value given the two
-// known data points (45 failed, 80 succeeded — 70 sits closer to the
-// success side without assuming everything above 50 is actually fine).
-// orders.fivesim_operator / orders.fivesim_operator_rate (see that
-// migration) now capture the operator + rate actually used on every
-// purchase going forward specifically so this can be revisited with a real
-// sms_received-vs-expired distribution by rate bucket instead of guessed —
-// do that before moving this again. See that commit's message for the
-// full before/after catalog-impact analysis (operators excluded, cost
-// deltas, product/country combos that lose every "reliable" operator and
-// fall back to cheapest-overall) this value change was reviewed against.
-const MIN_ACCEPTABLE_DELIVERY_RATE = 70;
-
 export interface FiveSimSmsMessage {
   // Verified: `sms` is an array, empty when no code has arrived yet.
   // Item shape when non-empty is NOT verified against a real populated
@@ -90,93 +67,62 @@ interface FiveSimGuestPricesResponse {
   };
 }
 
-// Routes where a known-unreliable operator must never be sold through,
-// even via selectBestOperator's normal "worse number beats no number"
-// fallback below. Replaces two earlier, route-specific workarounds for
-// usa/whatsapp (a ROUTE_RATE_FLOORS 30%-floor pre-filter, then a hardcoded
-// ROUTE_OPERATOR_PINS pin to virtual28 "regardless of rate" — see git
-// history) — both were reactions to that one route's rate looking
-// volatile, and both quietly assumed the pinned/floored operator was
-// actually reliable without checking real order outcomes.
-//
-// A 2026-09-24 audit of the live orders table found otherwise: usa/
-// whatsapp on the virtual28 pin was refunding ~50% of orders (2 of 4 since
-// the pin), and usa/telegram — never pinned or floored, just running the
-// general fallback below — was refunding 6 of 7 orders, every one of them
-// via an operator (virtual63) whose recorded rate at purchase time was
-// under 30%, well below MIN_ACCEPTABLE_DELIVERY_RATE. In both cases the
-// fallback's "sell the cheapest in-stock operator anyway" behavior was
-// doing exactly what it's designed to do — keep the route sellable — but
-// at a refund cost that made those orders net-negative even though the
-// pricing engine's margin on completed orders was correct.
-//
-// Scoped to just these routes rather than changing the fallback globally:
-// every other product/country combo relies on that fallback to stay
-// sellable at all when 5sim's stock is thin, and hasn't shown this failure
-// pattern. Routes here instead go fully unavailable (computeCatalogPrices
-// already renders that as "price unavailable"; purchaseNumber already
-// 409s with "not currently available in <country>") whenever nothing on
-// the route clears the standard 70% floor, rather than silently selling a
-// coin-flip (or worse) number. Revisit (loosen, extend to other routes, or
-// remove) once orders.fivesim_operator_rate has enough post-fix rows to
-// show whether 5sim's pool on these routes has actually improved.
-//
-// malaysia/whatsapp added 2026-09-24: a pre-emptive add, not a reaction to
-// refunds — it has zero historical orders. Checked live because it shares
-// usa/whatsapp and usa/telegram's shape (one in-stock operator, well under
-// the floor): virtual34 is the only in-stock operator and its rate is 0%
-// across every window 5sim reports (rate1/rate3/rate24 all 0%); the other
-// two operators are out of stock. Without this entry, selectOperatorForRoute
-// would fall back to selling virtual34 anyway — worse than either usa
-// route was before its fix, just not yet reflected in refund data because
-// nobody has bought it yet.
-const HARD_RELIABILITY_FLOOR_ROUTES: Record<string, Set<string>> = {
-  usa: new Set(["whatsapp", "telegram"]),
-  malaysia: new Set(["whatsapp"]),
-};
+// Minimum overall delivery success rate (5sim's per-operator `rate` field,
+// a percentage) an operator must clear to be *offered to the customer at
+// all* — below this, hidden entirely rather than ranked low. Replaces the
+// old auto-pick model this file used to have: a 70% floor
+// (MIN_ACCEPTABLE_DELIVERY_RATE) with a silent fallback to the cheapest
+// operator whenever nothing cleared it, plus a hard per-route block with
+// no fallback at all on usa/whatsapp, usa/telegram, and malaysia/whatsapp
+// (HARD_RELIABILITY_FLOOR_ROUTES — see git history on this file for that
+// model's full incident writeup). That model existed to protect a customer
+// who had zero visibility into what they were buying. Now the real rate is
+// shown and the customer chooses (see rankOperators below), so the floor
+// only needs to filter out options that are essentially never going to
+// work, not ones merely below "very good" — 20% is deliberately looser
+// than 70% for that reason, and the three previously-hard-blocked routes
+// are sellable again whenever something clears it.
+export const MIN_ACCEPTABLE_RATE = 20;
 
-// Reliability-first operator selection (confirmed rule — see
-// MIN_ACCEPTABLE_DELIVERY_RATE above and ARCHITECTURE.md's 5sim
-// integration section): prefer the cheapest operator among those that are
-// in stock and not confirmed unreliable. By default, if every in-stock
-// operator falls below the floor, falls back to the cheapest in-stock
-// operator overall — a worse number still beats no number at all. Pass
-// `allowUnreliableFallback: false` (see selectOperatorForRoute's
-// HARD_RELIABILITY_FLOOR_ROUTES) to disable that fallback instead and
-// return null, for a route where a below-floor operator must never be
-// sold rather than merely deprioritized.
-export function selectBestOperator(
+export interface RankedOperators {
+  // null when options is empty — nothing in stock clears the floor, and
+  // no unrated operator exists either.
+  recommended: FiveSimOperatorPrice | null;
+  // In-stock, rate undefined or >= MIN_ACCEPTABLE_RATE, sorted
+  // recommended-first: every rated operator first (highest rate, ties
+  // broken by lower cost), then every unrated operator (lowest cost
+  // first). An unrated operator only ever ranks first overall — i.e. is
+  // ever "recommended" — when no rated operator clears the floor; a
+  // confirmed rate, even just over the floor, outranks no data at all.
+  options: FiveSimOperatorPrice[];
+}
+
+// Single source of truth for "what operators can we offer for this
+// product, and which one do we recommend" — used both by getProductPrices
+// (the catalog grid's single "from ₦X" tile price, which takes
+// `recommended`) and getOperatorPrices (the buy-flow picker, which shows
+// the full `options` list). Keeping both on this one function is
+// deliberate: the tile and the picker must never disagree about which
+// operator is "the" price or the recommendation.
+export function rankOperators(
   operators: Record<string, { cost: number; count: number; rate?: number }>,
-  options: { allowUnreliableFallback?: boolean } = {},
-): FiveSimOperatorPrice | null {
+): RankedOperators {
   const inStock = Object.entries(operators)
     .filter(([, price]) => price.count > 0)
     .map(([operator, price]) => ({ operator, ...price }));
-  if (inStock.length === 0) return null;
 
-  const reliable = inStock.filter(
-    (price) => price.rate === undefined || price.rate >= MIN_ACCEPTABLE_DELIVERY_RATE,
+  const eligible = inStock.filter(
+    (price) => price.rate === undefined || price.rate >= MIN_ACCEPTABLE_RATE,
   );
-  const allowFallback = options.allowUnreliableFallback ?? true;
-  const pool = reliable.length > 0 ? reliable : allowFallback ? inStock : [];
-  if (pool.length === 0) return null;
 
-  return pool.reduce((best, price) => (price.cost < best.cost ? price : best));
-}
+  function isRated(p: FiveSimOperatorPrice): p is FiveSimOperatorPrice & { rate: number } {
+    return p.rate !== undefined;
+  }
+  const rated = eligible.filter(isRated).sort((a, b) => b.rate - a.rate || a.cost - b.cost);
+  const unrated = eligible.filter((p) => !isRated(p)).sort((a, b) => a.cost - b.cost);
 
-// Resolves the single operator getProductPrices sells for one
-// (countryCode, product) pair. Routes in HARD_RELIABILITY_FLOOR_ROUTES
-// only ever sell an operator that clears MIN_ACCEPTABLE_DELIVERY_RATE (or
-// has no rate reported at all — unproven, not disqualifying) and return
-// null — "not currently available" — when none do. Every other route uses
-// selectBestOperator's normal behavior unchanged, fallback included.
-export function selectOperatorForRoute(
-  countryCode: string,
-  product: string,
-  operators: Record<string, { cost: number; count: number; rate?: number }>,
-): FiveSimOperatorPrice | null {
-  const requiresReliableOperator = HARD_RELIABILITY_FLOOR_ROUTES[countryCode]?.has(product) ?? false;
-  return selectBestOperator(operators, { allowUnreliableFallback: !requiresReliableOperator });
+  const options = [...rated, ...unrated];
+  return { recommended: options[0] ?? null, options };
 }
 
 export class FiveSimError extends Error {
@@ -258,28 +204,53 @@ export function getProfile(): Promise<FiveSimProfile> {
 // One call returns every product's price across every operator for the
 // whole country — used to price the entire catalog grid without one
 // request per service. For each product, collapses the operator list down
-// to the single one selectOperatorForRoute picks — see that function for
-// the full pin / rate-floor / fallback precedence.
+// to rankOperators' `recommended` pick — see that function for the full
+// floor/ranking precedence. This is a single representative price for a
+// grid tile ("Get X from ₦Y"); the buy flow itself uses getOperatorPrices
+// below to show every option, not just this one.
 export async function getProductPrices(countryCode: string): Promise<FiveSimProductPrices> {
   const body = await fiveSimFetch<FiveSimGuestPricesResponse>(`/guest/prices?country=${countryCode}`);
   const countryBody = body[countryCode] ?? {};
   const result: FiveSimProductPrices = {};
 
   for (const [product, operators] of Object.entries(countryBody)) {
-    const best = selectOperatorForRoute(countryCode, product, operators);
-    if (best) result[product] = best;
+    const { recommended } = rankOperators(operators);
+    if (recommended) result[product] = recommended;
   }
 
   return result;
 }
 
+// Every ranked operator option for a single (countryCode, product) pair —
+// powers the buy-flow operator picker (components reached via
+// app/api/catalog/operators/route.ts) and purchaseNumber's re-validation
+// of a customer's chosen operator at purchase time.
+//
+// Deliberately reuses the same whole-country /guest/prices?country=
+// endpoint getProductPrices already calls (verified live — see this
+// file's header comment) and filters to one product in code, rather than
+// 5sim's documented product-scoped variant (/guest/prices?country=&
+// product=, see ARCHITECTURE.md's 5sim integration table). That scoped
+// query has NOT actually been exercised against a live response — its
+// exact shape is unconfirmed, and this sits directly on the purchase path,
+// so per AGENT.md ("don't invent 5sim API behavior") this intentionally
+// costs a slightly bigger payload for a verified-correct response shape
+// instead. Switch once someone's confirmed the scoped variant's shape
+// live.
+export async function getOperatorPrices(countryCode: string, product: string): Promise<RankedOperators> {
+  const body = await fiveSimFetch<FiveSimGuestPricesResponse>(`/guest/prices?country=${countryCode}`);
+  const operators = body[countryCode]?.[product] ?? {};
+  return rankOperators(operators);
+}
+
 // `operator` is the specific 5sim operator name to buy from — callers
-// should pass the one getProductPrices already picked for reliability
-// rather than "any", so the number actually purchased is the one that was
-// vetted, not whatever 5sim's own "any" logic happens to choose. "any"
-// remains a valid value (confirmed working in the live test purchase, it
-// returned a real virtual2 number) for callers that intentionally want to
-// defer to 5sim's own pick.
+// should pass the exact one the customer chose from getOperatorPrices'
+// options (re-validated server-side, see purchaseNumber), not "any", so
+// the number actually purchased is the one that was shown and vetted, not
+// whatever 5sim's own "any" logic happens to choose. "any" remains a
+// valid value (confirmed working in the live test purchase, it returned a
+// real virtual2 number) for callers that intentionally want to defer to
+// 5sim's own pick.
 export function buyActivation(
   countryCode: string,
   operator: string,

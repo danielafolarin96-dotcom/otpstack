@@ -2,7 +2,7 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/types/database";
 import { fetchAllPricingRules, fetchLatestFxRate, priceFromRulesAndRate, type ResolvedPrice } from "./engine";
-import { getProductPrices } from "@/lib/5sim/client";
+import { getOperatorPrices, getProductPrices, type FiveSimOperatorPrice } from "@/lib/5sim/client";
 import { getBrandIcon } from "@/lib/icons/lookup";
 
 export interface CatalogService {
@@ -94,6 +94,74 @@ export async function computeCatalogPrices(
     });
     return { service, price };
   });
+}
+
+export interface PricedOperatorOption {
+  operator: string;
+  price: ResolvedPrice;
+  // null = "new / unrated" — 5sim reported no rate data for this operator.
+  ratePct: number | null;
+}
+
+export interface OperatorPriceList {
+  // Always options[0] — see lib/5sim/client.ts's rankOperators, the single
+  // source of truth both this and the catalog-grid price (computeCatalogPrices,
+  // via getProductPrices) derive "recommended" from.
+  recommended: PricedOperatorOption;
+  options: PricedOperatorOption[];
+}
+
+// Every real, priced operator option for one (service, country) pair —
+// backs the buy-flow operator picker (app/api/catalog/operators/route.ts)
+// and purchaseNumber's re-validation of a customer's chosen operator.
+// Mirrors computeCatalogPrices' "fetch rules+fx once, map in memory" shape,
+// but scoped to a single service instead of the whole catalog, and prices
+// *every* eligible operator from its own cost rather than collapsing to
+// one. Returns null when the service/country isn't found, or when nothing
+// clears lib/5sim/client.ts's floor for this route (mirrors
+// computeCatalogPrices' price:null convention for "not sellable here").
+//
+// Unlike computeCatalogPrices, a 5sim fetch failure here is NOT swallowed
+// into "no options" — this backs an interactive picker a customer just
+// opened (reasonable to assume 5sim was reachable moments ago, when the
+// catalog grid itself rendered a price), so the API route this feeds
+// surfaces a real "try again" failure instead of a misleading "not
+// available here".
+export async function computeOperatorPrices(
+  admin: SupabaseClient<Database>,
+  serviceId: string,
+  countryId: string,
+): Promise<OperatorPriceList | null> {
+  const [serviceResult, countryResult, allRules, fxRate] = await Promise.all([
+    admin.from("services").select("fivesim_product_code").eq("id", serviceId).eq("is_active", true).maybeSingle(),
+    admin.from("countries").select("fivesim_country_code").eq("id", countryId).eq("is_active", true).maybeSingle(),
+    fetchAllPricingRules(admin),
+    fetchLatestFxRate(admin, UPSTREAM_CURRENCY_PAIR),
+  ]);
+
+  if (serviceResult.error) throw serviceResult.error;
+  if (countryResult.error) throw countryResult.error;
+  if (!serviceResult.data || !countryResult.data) return null;
+
+  const productCode = (serviceResult.data as { fivesim_product_code: string }).fivesim_product_code;
+  const countryCode = (countryResult.data as { fivesim_country_code: string }).fivesim_country_code;
+
+  const ranked = await getOperatorPrices(countryCode, productCode);
+  if (ranked.options.length === 0) return null;
+
+  function priceOption(opt: FiveSimOperatorPrice): PricedOperatorOption {
+    return {
+      operator: opt.operator,
+      price: priceFromRulesAndRate(allRules, fxRate, serviceId, countryId, {
+        amount: opt.cost,
+        currency: "USD",
+      }),
+      ratePct: opt.rate ?? null,
+    };
+  }
+
+  const options = ranked.options.map(priceOption);
+  return { recommended: options[0], options };
 }
 
 export async function fetchActiveCountries(

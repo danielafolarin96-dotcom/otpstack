@@ -54,12 +54,16 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
     }
 
-    const { serviceId, countryId } = (body as { serviceId?: unknown; countryId?: unknown }) ?? {};
-    if (typeof serviceId !== "string" || typeof countryId !== "string") {
-      return NextResponse.json({ error: "serviceId and countryId are required" }, { status: 400 });
+    const { serviceId, countryId, operator } =
+      (body as { serviceId?: unknown; countryId?: unknown; operator?: unknown }) ?? {};
+    if (typeof serviceId !== "string" || typeof countryId !== "string" || typeof operator !== "string") {
+      return NextResponse.json(
+        { error: "serviceId, countryId, and operator are required" },
+        { status: 400 },
+      );
     }
 
-    const result = await purchaseNumber(admin, { userId: user.id, serviceId, countryId });
+    const result = await purchaseNumber(admin, { userId: user.id, serviceId, countryId, operator });
     return NextResponse.json(result);
   } catch (err) {
     if (err instanceof PurchaseError) {

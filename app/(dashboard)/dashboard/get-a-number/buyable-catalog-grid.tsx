@@ -1,9 +1,14 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
 import { ServiceCatalogGrid, type CatalogGridEntry } from "@/components/catalog/service-catalog-grid";
+import { OperatorPickerModal } from "./operator-picker-modal";
 
+// handleBuy used to POST /api/orders immediately with whatever operator
+// getProductPrices had auto-picked server-side. It now just opens the
+// operator picker for that service — the actual purchase (and the
+// operator choice itself) happens inside OperatorPickerModal, which POSTs
+// /api/orders with the customer's confirmed choice.
 export function BuyableCatalogGrid({
   entries,
   countryId,
@@ -13,48 +18,31 @@ export function BuyableCatalogGrid({
   countryId: string;
   initialQuery?: string;
 }) {
-  const router = useRouter();
-  const [buyingServiceId, setBuyingServiceId] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [pickerService, setPickerService] = useState<{ id: string; name: string } | null>(null);
 
-  async function handleBuy(serviceId: string) {
-    setError(null);
-    setBuyingServiceId(serviceId);
-    try {
-      const response = await fetch("/api/orders", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ serviceId, countryId }),
-      });
-      const json = await response.json();
-
-      if (!response.ok) {
-        setError(json.error ?? "Purchase failed.");
-        setBuyingServiceId(null);
-        return;
-      }
-
-      router.push("/dashboard");
-      router.refresh();
-    } catch {
-      setError("Couldn't reach the server. Try again.");
-      setBuyingServiceId(null);
-    }
+  function handleBuy(serviceId: string) {
+    const entry = entries.find((e) => e.service.id === serviceId);
+    if (!entry) return;
+    setPickerService({ id: entry.service.id, name: entry.service.name });
   }
 
   return (
     <div className="flex flex-col gap-4">
-      {error && (
-        <p className="rounded-[10px] border border-line bg-danger/10 px-4 py-3 text-sm text-danger">
-          {error}
-        </p>
+      {/* No buyingServiceId here — the picker modal (which fully covers the
+          grid once open) owns all in-flight-purchase UI now, so the tile
+          itself never needs to show "Buying…" before anything is actually
+          in flight. */}
+      <ServiceCatalogGrid entries={entries} onBuy={handleBuy} initialQuery={initialQuery} />
+
+      {pickerService && (
+        <OperatorPickerModal
+          serviceId={pickerService.id}
+          serviceName={pickerService.name}
+          countryId={countryId}
+          onClose={() => setPickerService(null)}
+          onPurchased={() => setPickerService(null)}
+        />
       )}
-      <ServiceCatalogGrid
-        entries={entries}
-        onBuy={handleBuy}
-        buyingServiceId={buyingServiceId}
-        initialQuery={initialQuery}
-      />
     </div>
   );
 }

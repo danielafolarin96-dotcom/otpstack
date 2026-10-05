@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/types/database";
-import { buyActivation, cancelOrder, FiveSimError, getProductPrices } from "@/lib/5sim/client";
+import { buyActivation, cancelOrder, FiveSimError, getOperatorPrices } from "@/lib/5sim/client";
 import { PurchaseError, purchaseNumber } from "./purchase";
 
 vi.mock("@/lib/5sim/client", async () => {
@@ -9,7 +9,7 @@ vi.mock("@/lib/5sim/client", async () => {
   // FiveSimError and customerFacingPurchaseErrorMessage stay real — the
   // point of these tests is exercising that actual mapping, not mocking
   // it away.
-  return { ...actual, buyActivation: vi.fn(), cancelOrder: vi.fn(), getProductPrices: vi.fn() };
+  return { ...actual, buyActivation: vi.fn(), cancelOrder: vi.fn(), getOperatorPrices: vi.fn() };
 });
 
 const SERVICE = {
@@ -64,6 +64,8 @@ const FIVESIM_ORDER = {
   country: "nigeria",
 };
 
+const CHOSEN_OPERATOR = { operator: "virtual2", cost: 0.28, count: 100, rate: 80 };
+
 function fakeAdminClient(
   configs: Record<string, { data: unknown; error: unknown; count?: number }>,
   rpcResult: { data: unknown; error: unknown },
@@ -117,24 +119,36 @@ const baseRpcResult = () => ({
   error: null,
 });
 
+interface PurchaseParams {
+  userId: string;
+  serviceId: string;
+  countryId: string;
+  operator: string;
+}
+
+const purchaseParams = (overrides: Partial<PurchaseParams> = {}): PurchaseParams => ({
+  userId: "user-1",
+  serviceId: SERVICE.id,
+  countryId: COUNTRY.id,
+  operator: CHOSEN_OPERATOR.operator,
+  ...overrides,
+});
+
 beforeEach(() => {
   vi.clearAllMocks();
-  vi.mocked(getProductPrices).mockResolvedValue({
-    whatsapp: { operator: "virtual2", cost: 0.28, count: 100, rate: 80 },
+  vi.mocked(getOperatorPrices).mockResolvedValue({
+    recommended: CHOSEN_OPERATOR,
+    options: [CHOSEN_OPERATOR],
   });
   vi.mocked(buyActivation).mockResolvedValue(FIVESIM_ORDER);
   vi.mocked(cancelOrder).mockResolvedValue({ ...FIVESIM_ORDER, status: "CANCELED" });
 });
 
 describe("purchaseNumber", () => {
-  it("buys from 5sim, then atomically creates the order and debits the wallet via RPC", async () => {
+  it("buys from the exact operator the customer chose, then atomically creates the order and debits the wallet via RPC", async () => {
     const client = fakeAdminClient(baseConfigs(), baseRpcResult());
 
-    const result = await purchaseNumber(client, {
-      userId: "user-1",
-      serviceId: SERVICE.id,
-      countryId: COUNTRY.id,
-    });
+    const result = await purchaseNumber(client, purchaseParams());
 
     expect(result.order.id).toBe("order-1");
     expect(result.order.phoneNumber).toBe(FIVESIM_ORDER.phone);
@@ -156,10 +170,51 @@ describe("purchaseNumber", () => {
     expect(cancelOrder).not.toHaveBeenCalled();
   });
 
+  it("picks the chosen operator out of several options, not just the first one", async () => {
+    const otherOperator = { operator: "virtual9", cost: 0.5, count: 10, rate: 40 };
+    vi.mocked(getOperatorPrices).mockResolvedValue({
+      recommended: CHOSEN_OPERATOR,
+      options: [CHOSEN_OPERATOR, otherOperator],
+    });
+    const client = fakeAdminClient(baseConfigs(), baseRpcResult());
+
+    await purchaseNumber(client, purchaseParams({ operator: "virtual9" }));
+
+    expect(buyActivation).toHaveBeenCalledWith("nigeria", "virtual9", "whatsapp");
+    expect(client.rpc).toHaveBeenCalledWith(
+      "create_order_and_debit_wallet",
+      expect.objectContaining({ p_fivesim_operator: "virtual9", p_fivesim_operator_rate: 40 }),
+    );
+  });
+
+  it("rejects with 409 when the chosen operator is no longer in the ranked options — stock/rate shifted since the customer picked it", async () => {
+    vi.mocked(getOperatorPrices).mockResolvedValue({ recommended: null, options: [] });
+    const client = fakeAdminClient(baseConfigs(), baseRpcResult());
+
+    await expect(
+      purchaseNumber(client, purchaseParams({ operator: "virtual2" })),
+    ).rejects.toMatchObject({ status: 409 });
+    expect(buyActivation).not.toHaveBeenCalled();
+    expect(client.rpc).not.toHaveBeenCalled();
+  });
+
+  it("rejects with 409 when the chosen operator exists in the response but under a different operator — never silently substitutes a different one", async () => {
+    vi.mocked(getOperatorPrices).mockResolvedValue({
+      recommended: CHOSEN_OPERATOR,
+      options: [CHOSEN_OPERATOR], // doesn't include "virtual_gone"
+    });
+    const client = fakeAdminClient(baseConfigs(), baseRpcResult());
+
+    await expect(
+      purchaseNumber(client, purchaseParams({ operator: "virtual_gone" })),
+    ).rejects.toMatchObject({ status: 409 });
+    expect(buyActivation).not.toHaveBeenCalled();
+  });
+
   it("computes the payment fee from the active fee schedule and passes it to the RPC", async () => {
     const client = fakeAdminClient(baseConfigs(), baseRpcResult());
 
-    await purchaseNumber(client, { userId: "user-1", serviceId: SERVICE.id, countryId: COUNTRY.id });
+    await purchaseNumber(client, purchaseParams());
 
     // resolved price = upstream cost (0.28 USD * 1600 rate = ₦448 = 44,800
     // kobo) * 2 (the 100% global markup rule) = 89,600 kobo; 1.5% of that,
@@ -175,11 +230,7 @@ describe("purchaseNumber", () => {
     configs.payment_fee_schedules = { data: null, error: null };
     const client = fakeAdminClient(configs, baseRpcResult());
 
-    const result = await purchaseNumber(client, {
-      userId: "user-1",
-      serviceId: SERVICE.id,
-      countryId: COUNTRY.id,
-    });
+    const result = await purchaseNumber(client, purchaseParams());
 
     expect(result.order.id).toBe("order-1");
     expect(client.rpc).toHaveBeenCalledWith(
@@ -193,10 +244,8 @@ describe("purchaseNumber", () => {
     configs.users = { data: { is_frozen: true }, error: null };
     const client = fakeAdminClient(configs, baseRpcResult());
 
-    await expect(
-      purchaseNumber(client, { userId: "user-1", serviceId: SERVICE.id, countryId: COUNTRY.id }),
-    ).rejects.toMatchObject({ status: 403 });
-    expect(getProductPrices).not.toHaveBeenCalled();
+    await expect(purchaseNumber(client, purchaseParams())).rejects.toMatchObject({ status: 403 });
+    expect(getOperatorPrices).not.toHaveBeenCalled();
     expect(buyActivation).not.toHaveBeenCalled();
   });
 
@@ -205,9 +254,10 @@ describe("purchaseNumber", () => {
     configs.users = { data: null, error: null };
     const client = fakeAdminClient(configs, baseRpcResult());
 
-    await expect(
-      purchaseNumber(client, { userId: "user-1", serviceId: SERVICE.id, countryId: COUNTRY.id }),
-    ).rejects.toMatchObject({ status: 404, message: "User not found" });
+    await expect(purchaseNumber(client, purchaseParams())).rejects.toMatchObject({
+      status: 404,
+      message: "User not found",
+    });
     expect(buyActivation).not.toHaveBeenCalled();
   });
 
@@ -216,10 +266,8 @@ describe("purchaseNumber", () => {
     configs.orders = { data: null, error: null, count: 3 };
     const client = fakeAdminClient(configs, baseRpcResult());
 
-    await expect(
-      purchaseNumber(client, { userId: "user-1", serviceId: SERVICE.id, countryId: COUNTRY.id }),
-    ).rejects.toMatchObject({ status: 429 });
-    expect(getProductPrices).not.toHaveBeenCalled();
+    await expect(purchaseNumber(client, purchaseParams())).rejects.toMatchObject({ status: 429 });
+    expect(getOperatorPrices).not.toHaveBeenCalled();
     expect(buyActivation).not.toHaveBeenCalled();
   });
 
@@ -229,18 +277,8 @@ describe("purchaseNumber", () => {
     const client = fakeAdminClient(configs, baseRpcResult());
 
     await expect(
-      purchaseNumber(client, { userId: "user-1", serviceId: "x", countryId: COUNTRY.id }),
+      purchaseNumber(client, purchaseParams({ serviceId: "x" })),
     ).rejects.toMatchObject({ status: 404 });
-    expect(buyActivation).not.toHaveBeenCalled();
-  });
-
-  it("rejects with 409 when 5sim doesn't offer this product in this country", async () => {
-    vi.mocked(getProductPrices).mockResolvedValue({}); // whatsapp missing
-    const client = fakeAdminClient(baseConfigs(), baseRpcResult());
-
-    await expect(
-      purchaseNumber(client, { userId: "user-1", serviceId: SERVICE.id, countryId: COUNTRY.id }),
-    ).rejects.toMatchObject({ status: 409 });
     expect(buyActivation).not.toHaveBeenCalled();
   });
 
@@ -249,9 +287,7 @@ describe("purchaseNumber", () => {
     configs.wallets = { data: { balance_kobo: 0 }, error: null };
     const client = fakeAdminClient(configs, baseRpcResult());
 
-    await expect(
-      purchaseNumber(client, { userId: "user-1", serviceId: SERVICE.id, countryId: COUNTRY.id }),
-    ).rejects.toMatchObject({ status: 402 });
+    await expect(purchaseNumber(client, purchaseParams())).rejects.toMatchObject({ status: 402 });
     expect(buyActivation).not.toHaveBeenCalled();
   });
 
@@ -259,9 +295,7 @@ describe("purchaseNumber", () => {
     vi.mocked(buyActivation).mockRejectedValue(new Error("5sim: out of stock"));
     const client = fakeAdminClient(baseConfigs(), baseRpcResult());
 
-    await expect(
-      purchaseNumber(client, { userId: "user-1", serviceId: SERVICE.id, countryId: COUNTRY.id }),
-    ).rejects.toMatchObject({ status: 502 });
+    await expect(purchaseNumber(client, purchaseParams())).rejects.toMatchObject({ status: 502 });
     // No wallet debit, no order row — confirms ARCHITECTURE.md's ordering
     // (buy succeeds -> THEN debit + order) held: a failed 5sim purchase
     // never reaches the money-moving RPC at all.
@@ -280,9 +314,7 @@ describe("purchaseNumber", () => {
     );
     const client = fakeAdminClient(baseConfigs(), baseRpcResult());
 
-    await expect(
-      purchaseNumber(client, { userId: "user-1", serviceId: SERVICE.id, countryId: COUNTRY.id }),
-    ).rejects.toMatchObject({
+    await expect(purchaseNumber(client, purchaseParams())).rejects.toMatchObject({
       status: 502,
       message: "No numbers currently available for this service/country — try again shortly or pick a different country.",
     });
@@ -295,9 +327,10 @@ describe("purchaseNumber", () => {
       error: { message: "sync_wallet_balance: balance would go negative for user_id x", code: "P0001" },
     });
 
-    await expect(
-      purchaseNumber(client, { userId: "user-1", serviceId: SERVICE.id, countryId: COUNTRY.id }),
-    ).rejects.toMatchObject({ status: 402, message: "Insufficient wallet balance" });
+    await expect(purchaseNumber(client, purchaseParams())).rejects.toMatchObject({
+      status: 402,
+      message: "Insufficient wallet balance",
+    });
     expect(cancelOrder).toHaveBeenCalledWith(String(FIVESIM_ORDER.id));
   });
 
@@ -307,9 +340,10 @@ describe("purchaseNumber", () => {
       error: { message: "connection reset", code: "08000" },
     });
 
-    await expect(
-      purchaseNumber(client, { userId: "user-1", serviceId: SERVICE.id, countryId: COUNTRY.id }),
-    ).rejects.toMatchObject({ status: 500, message: "Failed to record the purchase — it was reversed" });
+    await expect(purchaseNumber(client, purchaseParams())).rejects.toMatchObject({
+      status: 500,
+      message: "Failed to record the purchase — it was reversed",
+    });
     expect(cancelOrder).toHaveBeenCalledWith(String(FIVESIM_ORDER.id));
   });
 });

@@ -46,15 +46,33 @@ describe("POST /api/orders", () => {
       order: { id: "order-1", phoneNumber: "+2348000000000", expiresAt: new Date().toISOString() },
     });
 
-    const response = await POST(makeRequest({ serviceId: "service-1", countryId: "country-1" }));
+    const response = await POST(
+      makeRequest({ serviceId: "service-1", countryId: "country-1", operator: "virtual2" }),
+    );
     const json = await response.json();
 
     expect(response.status).toBe(200);
     expect(json.order.id).toBe("order-1");
     expect(purchaseNumber).toHaveBeenCalledWith(
       expect.anything(),
-      expect.objectContaining({ userId: "user-1", serviceId: "service-1", countryId: "country-1" }),
+      expect.objectContaining({
+        userId: "user-1",
+        serviceId: "service-1",
+        countryId: "country-1",
+        operator: "virtual2",
+      }),
     );
+  });
+
+  it("rejects with 400 when operator is missing from the body, without ever calling purchaseNumber", async () => {
+    getUser.mockResolvedValue({ data: { user: USER } });
+
+    const response = await POST(makeRequest({ serviceId: "service-1", countryId: "country-1" }));
+    const json = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(json.error).toMatch(/operator/i);
+    expect(purchaseNumber).not.toHaveBeenCalled();
   });
 
   it("rejects with 401 without ever checking the rate limit or purchasing", async () => {
@@ -96,7 +114,9 @@ describe("POST /api/orders", () => {
       ),
     );
 
-    const response = await POST(makeRequest({ serviceId: "service-1", countryId: "country-1" }));
+    const response = await POST(
+      makeRequest({ serviceId: "service-1", countryId: "country-1", operator: "virtual2" }),
+    );
     const json = await response.json();
 
     expect(response.status).toBe(502);
