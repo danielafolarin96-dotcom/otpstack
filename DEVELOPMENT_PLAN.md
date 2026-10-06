@@ -28,7 +28,7 @@ Phased so each stage produces something testable. No fixed dates — sequence an
 - `lib/5sim/client.ts` typed wrapper.
 - Purchase flow: balance check -> buy -> debit -> order created.
 - Polling job for SMS arrival; dashboard "active number" panel with a live countdown.
-- 10-minute TTL cron + auto-refund logic; manual cancel-for-refund.
+- 3-minute TTL cron + auto-refund logic; manual cancel-for-refund.
 
 ## Phase 5 — Admin panel
 - Orders table, transactions table, 5sim balance widget, user list with freeze/unfreeze, manual refund tool, audit log view.

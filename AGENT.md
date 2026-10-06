@@ -21,7 +21,7 @@ This file governs how an AI coding agent (Claude Code or similar) should operate
 - `lib/wallet/ledger.ts` — the only place wallet balances are written
 - `app/api/webhooks/paystack/route.ts` — Paystack funding webhook, signature-verified
 - `lib/5sim/client.ts` — 5sim API wrapper
-- `app/api/cron/expire-orders/route.ts` — 10-minute TTL sweep + auto-refund job
+- `app/api/cron/expire-orders/route.ts` — 3-minute TTL sweep + auto-refund job
 
 ## Escalate to the user (don't guess) when:
 - A decision affects money (margin, refund policy, pricing rules).
