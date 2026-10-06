@@ -6,26 +6,10 @@ import { useRouter } from "next/navigation";
 interface OperatorOption {
   operator: string;
   priceKobo: number;
-  ratePct: number | null;
 }
 
 function formatNairaWhole(kobo: number) {
   return Math.round(kobo / 100).toLocaleString("en-NG");
-}
-
-function RateBadge({ ratePct }: { ratePct: number | null }) {
-  if (ratePct === null) {
-    return (
-      <span className="rounded-full border border-line bg-paper px-2 py-0.5 text-xs font-medium text-text-dim">
-        New / unrated
-      </span>
-    );
-  }
-  return (
-    <span className="rounded-full border border-line bg-paper px-2 py-0.5 text-xs font-medium text-text-dim">
-      {Math.round(ratePct)}% delivered
-    </span>
-  );
 }
 
 // Opened from BuyableCatalogGrid when a customer taps "Buy" on a service —
@@ -194,7 +178,7 @@ export function OperatorPickerModal({
         {!loading && !loadError && options.length > 0 && (
           <>
             <div role="radiogroup" className="flex flex-col gap-2 overflow-y-auto">
-              {options.map((option) => {
+              {options.map((option, index) => {
                 const isSelected = selected === option.operator;
                 const isRecommended = option.operator === recommendedOperator;
                 return (
@@ -208,16 +192,13 @@ export function OperatorPickerModal({
                       isSelected ? "border-signal bg-paper" : "border-line hover:bg-paper"
                     }`}
                   >
-                    <div className="flex flex-col gap-1">
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm font-medium text-text">{option.operator}</span>
-                        {isRecommended && (
-                          <span className="rounded-full bg-signal/15 px-2 py-0.5 text-xs font-semibold text-signal-text">
-                            Recommended
-                          </span>
-                        )}
-                      </div>
-                      <RateBadge ratePct={option.ratePct} />
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-medium text-text">Operator {index + 1}</span>
+                      {isRecommended && (
+                        <span className="rounded-full bg-signal/15 px-2 py-0.5 text-xs font-semibold text-signal-text">
+                          Recommended
+                        </span>
+                      )}
                     </div>
                     <span className="font-technical text-sm font-bold text-signal-text">
                       ₦{formatNairaWhole(option.priceKobo)}
@@ -241,6 +222,9 @@ export function OperatorPickerModal({
             >
               {buying ? "Buying…" : "Buy"}
             </button>
+            <p className="text-center text-xs text-text-dim">
+              Refunded automatically if no code arrives within 3 minutes. You can then try another operator.
+            </p>
           </>
         )}
       </div>

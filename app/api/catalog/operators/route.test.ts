@@ -26,7 +26,7 @@ beforeEach(() => {
 });
 
 describe("GET /api/catalog/operators", () => {
-  it("returns the ranked options, serialized with priceKobo and ratePct", async () => {
+  it("returns the ranked options, serialized with priceKobo but without ratePct", async () => {
     getUser.mockResolvedValue({ data: { user: USER } });
     const option = (operator: string, priceKobo: number, ratePct: number | null) => ({
       operator,
@@ -42,11 +42,12 @@ describe("GET /api/catalog/operators", () => {
     const json = await response.json();
 
     expect(response.status).toBe(200);
-    expect(json.recommended).toEqual({ operator: "virtual28", priceKobo: 365427, ratePct: 42.86 });
+    expect(json.recommended).toEqual({ operator: "virtual28", priceKobo: 365427 });
     expect(json.options).toEqual([
-      { operator: "virtual28", priceKobo: 365427, ratePct: 42.86 },
-      { operator: "virtual8", priceKobo: 222505, ratePct: null },
+      { operator: "virtual28", priceKobo: 365427 },
+      { operator: "virtual8", priceKobo: 222505 },
     ]);
+    expect(JSON.stringify(json)).not.toContain("ratePct");
   });
 
   it("returns an empty recommended/options pair, not an error, when nothing is sellable", async () => {

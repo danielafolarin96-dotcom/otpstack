@@ -3,11 +3,12 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { computeOperatorPrices, type PricedOperatorOption } from "@/lib/pricing/catalog";
 
+// ratePct is deliberately dropped here — operator delivery rates stay
+// server-side for our own records and never reach the browser.
 function serialize(option: PricedOperatorOption) {
   return {
     operator: option.operator,
     priceKobo: option.price.priceKobo,
-    ratePct: option.ratePct,
   };
 }
 
