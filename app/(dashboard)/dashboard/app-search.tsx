@@ -6,21 +6,19 @@ import type { CatalogEntry } from "@/lib/pricing/catalog";
 
 const RESULT_LIMIT = 8;
 
-type PricedCatalogEntry = CatalogEntry & { price: NonNullable<CatalogEntry["price"]> };
-
 // Pure, so it's unit-tested directly (app-search.test.ts) instead of only
 // ever exercised through the DOM — same split as active-number-panel.tsx's
-// resolveVisibleOrder. Unpriced services (price === null — 5sim doesn't
-// currently offer them in the selected country) are excluded, matching
-// ServiceCatalogGrid's own "available" filter: a result that can't
-// actually be bought isn't a useful search match here.
-export function filterAppSearchMatches(entries: CatalogEntry[], query: string): PricedCatalogEntry[] {
+// resolveVisibleOrder. Unpriced services (price === null — 5sim has no
+// operator clearing the 20% floor in the selected country right now) are
+// still returned on a name match, same as ServiceCatalogGrid no longer
+// hiding their tile — the caller renders them greyed out and
+// non-interactive instead of excluding them, so a real service a visitor
+// searches for is never a silent "No matching services."
+export function filterAppSearchMatches(entries: CatalogEntry[], query: string): CatalogEntry[] {
   const normalized = query.trim().toLowerCase();
   if (normalized === "") return [];
   return entries
-    .filter(
-      (e): e is PricedCatalogEntry => e.price !== null && e.service.name.toLowerCase().includes(normalized),
-    )
+    .filter((e) => e.service.name.toLowerCase().includes(normalized))
     .slice(0, RESULT_LIMIT);
 }
 
@@ -35,7 +33,15 @@ function formatNairaWhole(kobo: number) {
 // page already owns country switching, stock/availability display, and
 // the actual "Buy" action (see BuyableCatalogGrid), so this only needs to
 // get the visitor there pre-filtered to the service they tapped.
-export function DashboardAppSearch({ entries, countryId }: { entries: CatalogEntry[]; countryId: string }) {
+export function DashboardAppSearch({
+  entries,
+  countryId,
+  countryName,
+}: {
+  entries: CatalogEntry[];
+  countryId: string;
+  countryName: string;
+}) {
   const router = useRouter();
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
@@ -101,30 +107,45 @@ export function DashboardAppSearch({ entries, countryId }: { entries: CatalogEnt
           {matches.length === 0 ? (
             <p className="px-3 py-2 text-sm text-text-dim">No matching services.</p>
           ) : (
-            matches.map(({ service, price }) => (
-              <button
-                key={service.id}
-                type="button"
-                role="option"
-                aria-selected={false}
-                // onMouseDown (fires for touch taps too) + preventDefault,
-                // onClick as a fallback: same mobile-reliability pattern as
-                // country-select.tsx's option buttons — the input above is
-                // focused while this is open, and without this a tap can
-                // just blur/dismiss the keyboard instead of registering.
-                onMouseDown={(e) => {
-                  e.preventDefault();
-                  goToService(service.name);
-                }}
-                onClick={() => goToService(service.name)}
-                className="flex w-full items-center justify-between gap-3 rounded-[10px] px-3 py-2 text-left transition-colors hover:bg-paper"
-              >
-                <span className="text-sm font-medium text-text">{service.name}</span>
-                <span className="font-technical text-sm text-signal-text">
-                  ₦{formatNairaWhole(price.priceKobo)}
-                </span>
-              </button>
-            ))
+            matches.map(({ service, price }) =>
+              price === null ? (
+                <div
+                  key={service.id}
+                  role="option"
+                  aria-disabled="true"
+                  aria-selected={false}
+                  className="flex flex-col gap-0.5 rounded-[10px] px-3 py-2 text-left opacity-60"
+                >
+                  <span className="text-sm font-medium text-text-dim">{service.name}</span>
+                  <span className="text-xs text-text-dim">
+                    Temporarily unavailable in {countryName} — check back soon or try another country
+                  </span>
+                </div>
+              ) : (
+                <button
+                  key={service.id}
+                  type="button"
+                  role="option"
+                  aria-selected={false}
+                  // onMouseDown (fires for touch taps too) + preventDefault,
+                  // onClick as a fallback: same mobile-reliability pattern as
+                  // country-select.tsx's option buttons — the input above is
+                  // focused while this is open, and without this a tap can
+                  // just blur/dismiss the keyboard instead of registering.
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    goToService(service.name);
+                  }}
+                  onClick={() => goToService(service.name)}
+                  className="flex w-full items-center justify-between gap-3 rounded-[10px] px-3 py-2 text-left transition-colors hover:bg-paper"
+                >
+                  <span className="text-sm font-medium text-text">{service.name}</span>
+                  <span className="font-technical text-sm text-signal-text">
+                    ₦{formatNairaWhole(price.priceKobo)}
+                  </span>
+                </button>
+              ),
+            )
           )}
         </div>
       )}

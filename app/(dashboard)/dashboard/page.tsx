@@ -98,7 +98,7 @@ export default async function OverviewPage() {
       </div>
 
       {defaultCountry && allEntries.length > 0 && (
-        <DashboardAppSearch entries={allEntries} countryId={defaultCountry.id} />
+        <DashboardAppSearch entries={allEntries} countryId={defaultCountry.id} countryName={defaultCountry.name} />
       )}
 
       <div className="flex flex-col gap-3">

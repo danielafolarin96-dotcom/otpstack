@@ -27,6 +27,8 @@ export default async function GetANumberPage({
 
   const defaultCountry = countries.find((c) => c.name === "United States") ?? countries[0];
   const selectedCountryId = country ?? defaultCountry.id;
+  const selectedCountryName =
+    countries.find((c) => c.id === selectedCountryId)?.name ?? defaultCountry.name;
 
   const entries = await computeCatalogPrices(admin, selectedCountryId);
 
@@ -42,7 +44,12 @@ export default async function GetANumberPage({
         <CountrySelect countries={countries} selectedId={selectedCountryId} />
       </div>
 
-      <BuyableCatalogGrid entries={entries} countryId={selectedCountryId} initialQuery={q} />
+      <BuyableCatalogGrid
+        entries={entries}
+        countryId={selectedCountryId}
+        countryName={selectedCountryName}
+        initialQuery={q}
+      />
     </div>
   );
 }

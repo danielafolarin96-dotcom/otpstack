@@ -134,6 +134,7 @@ export default async function Home() {
           {availableEntries.length > 0 ? (
             <ServiceCatalogGrid
               entries={availableEntries}
+              countryName={defaultCountry?.name ?? ""}
               previewLimit={LANDING_CATALOG_LIMIT}
               previewCta={{ label: "Create an account", href: "/signup" }}
             />

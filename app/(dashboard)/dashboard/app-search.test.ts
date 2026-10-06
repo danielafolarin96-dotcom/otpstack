@@ -40,12 +40,15 @@ describe("filterAppSearchMatches", () => {
 
   it("matches multiple services sharing a substring", () => {
     const matches = filterAppSearchMatches(ENTRIES, "t");
-    expect(matches.map((m) => m.service.name).sort()).toEqual(["TikTok", "Telegram", "WhatsApp"].sort());
+    expect(matches.map((m) => m.service.name).sort()).toEqual(
+      ["TikTok", "Telegram", "WhatsApp", "WeChat"].sort(),
+    );
   });
 
-  it("excludes services with no price in the selected country, even on a name match", () => {
+  it("still returns a service with no price in the selected country on a name match, not excluded", () => {
     const matches = filterAppSearchMatches(ENTRIES, "wechat");
-    expect(matches).toEqual([]);
+    expect(matches.map((m) => m.service.name)).toEqual(["WeChat"]);
+    expect(matches[0].price).toBeNull();
   });
 
   it("caps results at the result limit", () => {

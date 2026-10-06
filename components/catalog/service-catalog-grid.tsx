@@ -95,6 +95,7 @@ function ServiceLogo({
 // so there's no later prop change for this component to react to.
 export function ServiceCatalogGrid({
   entries,
+  countryName,
   onBuy,
   buyingServiceId,
   previewLimit,
@@ -102,30 +103,26 @@ export function ServiceCatalogGrid({
   initialQuery,
 }: {
   entries: CatalogGridEntry[];
+  // Used only for an unavailable tile's message below — the 20% floor
+  // (lib/5sim/client.ts's MIN_ACCEPTABLE_RATE) is unchanged, this just
+  // stops hiding the tile entirely when nothing clears it.
+  countryName: string;
   onBuy?: (serviceId: string) => void;
   buyingServiceId?: string | null;
   previewLimit?: number;
   previewCta?: { label: string; href: string };
   initialQuery?: string;
 }) {
-  // Hidden for now rather than shown as a disabled/greyed tile — at the
-  // full catalog scale (Stage 4: 722 services x 80 countries) most
-  // countries only stock a fraction of the catalog, so showing everything
-  // regardless of availability made the grid mostly "Unavailable" tiles.
-  const available = entries.filter(
-    (e): e is CatalogGridEntry & { price: NonNullable<CatalogGridEntry["price"]> } => e.price !== null,
-  );
-
   const categories = useMemo(() => {
-    const set = new Set(available.map((e) => e.service.category));
+    const set = new Set(entries.map((e) => e.service.category));
     return ["All", ...Array.from(set).sort()];
-  }, [available]);
+  }, [entries]);
   const [active, setActive] = useState("All");
   const [query, setQuery] = useState(initialQuery ?? "");
 
   const normalizedQuery = query.trim().toLowerCase();
 
-  const filtered = available.filter((e) => {
+  const filtered = entries.filter((e) => {
     if (active !== "All" && e.service.category !== active) return false;
     if (normalizedQuery === "") return true;
     return e.service.name.toLowerCase().includes(normalizedQuery);
@@ -168,10 +165,10 @@ export function ServiceCatalogGrid({
       {filtered.length === 0 ? (
         <div className="flex min-h-[200px] flex-col items-center justify-center gap-2 rounded-[14px] border border-dashed border-line bg-paper-raised px-6 text-center">
           <p className="font-display text-base font-semibold text-ink">
-            {available.length === 0 ? "No services available here yet" : "No matches"}
+            {entries.length === 0 ? "No services available here yet" : "No matches"}
           </p>
           <p className="max-w-sm text-sm text-text-dim">
-            {available.length === 0
+            {entries.length === 0
               ? "This country doesn't have any services in stock right now — try another one."
               : "Try a different search term or category."}
           </p>
@@ -180,10 +177,13 @@ export function ServiceCatalogGrid({
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4">
           {displayed.map(({ service, price }) => {
             const isBuying = buyingServiceId === service.id;
+            const isAvailable = price !== null;
             return (
               <div
                 key={service.id}
-                className="flex flex-col items-center gap-2 rounded-[14px] border border-line bg-paper-raised p-4 text-center"
+                className={`flex flex-col items-center gap-2 rounded-[14px] border border-line bg-paper-raised p-4 text-center ${
+                  isAvailable ? "" : "opacity-60"
+                }`}
               >
                 <ServiceLogo
                   name={service.name}
@@ -192,13 +192,19 @@ export function ServiceCatalogGrid({
                   iconIsNearWhite={service.iconIsNearWhite}
                 />
                 <p className="text-sm font-medium text-text">{service.name}</p>
-                <p className="font-technical text-sm text-signal-text">
-                  Get {service.name} from ₦{formatNairaWhole(price.priceKobo)}
-                </p>
+                {isAvailable ? (
+                  <p className="font-technical text-sm text-signal-text">
+                    Get {service.name} from ₦{formatNairaWhole(price.priceKobo)}
+                  </p>
+                ) : (
+                  <p className="text-xs text-text-dim">
+                    Temporarily unavailable in {countryName} — check back soon or try another country
+                  </p>
+                )}
                 {onBuy && (
                   <button
                     type="button"
-                    disabled={Boolean(buyingServiceId)}
+                    disabled={!isAvailable || Boolean(buyingServiceId)}
                     onClick={() => onBuy(service.id)}
                     className="mt-1 w-full rounded-[10px] bg-signal-button px-3 py-1.5 text-xs font-semibold text-paper transition-colors hover:bg-signal-dark disabled:opacity-50"
                   >
@@ -211,12 +217,12 @@ export function ServiceCatalogGrid({
         </div>
       )}
 
-      {previewCta && !isFiltering && available.length > displayed.length && (
+      {previewCta && !isFiltering && entries.length > displayed.length && (
         <p className="text-center text-sm text-text-dim">
           <Link href={previewCta.href} className="font-semibold text-signal-text hover:text-signal-dark">
             {previewCta.label}
           </Link>{" "}
-          to browse all {available.length} services.
+          to browse all {entries.length} services.
         </p>
       )}
     </div>

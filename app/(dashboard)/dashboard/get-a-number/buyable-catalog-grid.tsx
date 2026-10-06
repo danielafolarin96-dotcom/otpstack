@@ -12,10 +12,12 @@ import { OperatorPickerModal } from "./operator-picker-modal";
 export function BuyableCatalogGrid({
   entries,
   countryId,
+  countryName,
   initialQuery,
 }: {
   entries: CatalogGridEntry[];
   countryId: string;
+  countryName: string;
   initialQuery?: string;
 }) {
   const [pickerService, setPickerService] = useState<{ id: string; name: string } | null>(null);
@@ -32,7 +34,12 @@ export function BuyableCatalogGrid({
           grid once open) owns all in-flight-purchase UI now, so the tile
           itself never needs to show "Buying…" before anything is actually
           in flight. */}
-      <ServiceCatalogGrid entries={entries} onBuy={handleBuy} initialQuery={initialQuery} />
+      <ServiceCatalogGrid
+        entries={entries}
+        countryName={countryName}
+        onBuy={handleBuy}
+        initialQuery={initialQuery}
+      />
 
       {pickerService && (
         <OperatorPickerModal
