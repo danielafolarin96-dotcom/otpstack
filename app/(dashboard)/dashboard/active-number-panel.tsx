@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
 const POLL_INTERVAL_MS = 4000;
@@ -58,6 +58,73 @@ export function resolveVisibleOrder(
   return order;
 }
 
+interface ListenerTarget {
+  addEventListener(type: string, listener: () => void): void;
+  removeEventListener(type: string, listener: () => void): void;
+}
+
+// Money bug fixed Oct 2026 (see lib/orders/upstream-sms.ts): the old poll
+// only rescheduled itself when a poll ended in setOrder, so a single
+// non-2xx response or network error stopped polling for the rest of the
+// order — four customers' codes sat at 5sim, never shown, until the order
+// was cancelled/expired and refunded. This loop always schedules the next
+// poll from a `finally`, whatever the previous one did. It also polls
+// immediately when the tab becomes visible again, the window regains
+// focus, or the browser comes back online — backgrounded tabs throttle
+// timers, so those are exactly the moments a waiting customer looks back.
+// Polls never overlap: an immediate trigger during an in-flight poll is
+// dropped (that poll's finally reschedules). Pure (timers + event targets
+// injected via globals/params) so it's testable without a DOM library —
+// see active-number-panel.test.ts. Returns a stop function.
+export function startPollLoop(options: {
+  pollOnce: () => Promise<void>;
+  intervalMs: number;
+  windowTarget?: ListenerTarget;
+  documentTarget?: ListenerTarget & { visibilityState: string };
+}): () => void {
+  const { pollOnce, intervalMs, windowTarget, documentTarget } = options;
+  let stopped = false;
+  let inFlight = false;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+
+  async function poll() {
+    if (stopped || inFlight) return;
+    inFlight = true;
+    if (timer) {
+      clearTimeout(timer);
+      timer = null;
+    }
+    try {
+      await pollOnce();
+    } catch {
+      // Network hiccup / bad response — the next poll retries.
+    } finally {
+      inFlight = false;
+      if (!stopped) timer = setTimeout(poll, intervalMs);
+    }
+  }
+
+  function pollNow() {
+    void poll();
+  }
+  function pollIfVisible() {
+    if (documentTarget?.visibilityState === "visible") void poll();
+  }
+
+  timer = setTimeout(poll, intervalMs);
+  windowTarget?.addEventListener("focus", pollNow);
+  windowTarget?.addEventListener("online", pollNow);
+  documentTarget?.addEventListener("visibilitychange", pollIfVisible);
+
+  return () => {
+    stopped = true;
+    if (timer) clearTimeout(timer);
+    windowTarget?.removeEventListener("focus", pollNow);
+    windowTarget?.removeEventListener("online", pollNow);
+    documentTarget?.removeEventListener("visibilitychange", pollIfVisible);
+  };
+}
+
 function formatCountdown(msRemaining: number) {
   if (msRemaining <= 0) return "0:00";
   const totalSeconds = Math.floor(msRemaining / 1000);
@@ -72,7 +139,9 @@ export function ActiveNumberPanel({ order: initialOrder }: { order: ActiveOrder 
   const [now, setNow] = useState(() => Date.now());
   const [cancelling, setCancelling] = useState(false);
   const [copied, setCopied] = useState(false);
-  const pollTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Set when a cancel request finds the code already arrived at 5sim (the
+  // cancel route delivers it instead of refunding) — see handleCancel.
+  const [codeArrivedOnCancel, setCodeArrivedOnCancel] = useState(false);
 
   function handleDismiss() {
     if (!order) return;
@@ -98,43 +167,32 @@ export function ActiveNumberPanel({ order: initialOrder }: { order: ActiveOrder 
     return () => clearInterval(tick);
   }, []);
 
-  // Audit fix: this used to also depend on `now`, which the countdown
-  // effect above bumps every 1000ms — since that's shorter than
-  // POLL_INTERVAL_MS (4000ms), the timeout got cleared and rescheduled
-  // every second, before it could ever actually fire. The poll request was
-  // never sent. `now` isn't referenced in this effect's body at all; it
-  // was never needed here.
-  //
-  // Removing it isn't sufficient on its own, though: the effect only
-  // reschedules the next poll when it re-runs, which happens when `order`
-  // changes identity. The original callback only called setOrder when the
-  // polled status actually differed — so once a single poll found "no
-  // change" (the common case, while waiting for an SMS), `order` would
-  // stop changing and polling would silently stop after that one attempt.
-  // Calling setOrder on every completed poll (not just on a status change)
-  // keeps `order`'s identity changing each cycle, which is what drives the
-  // effect to reschedule the next poll 4s later.
+  // Keyed on the order's id and whether it's still pending — not on the
+  // `order` object itself — so the loop starts once per pending order and
+  // stops as soon as it resolves, independent of how often setOrder runs.
+  // (History: an earlier version depended on `now`, which reset the timer
+  // every second so no poll ever fired; the version after that depended on
+  // `order` and only rescheduled via setOrder, which a single failed fetch
+  // skipped — see startPollLoop's comment.)
+  const pollingOrderId = order?.status === "pending" ? order.id : null;
   useEffect(() => {
-    if (!order || order.status !== "pending") return;
+    if (!pollingOrderId) return;
 
-    pollTimer.current = setTimeout(async () => {
-      try {
-        const response = await fetch(`/api/orders/${order.id}/status`);
+    return startPollLoop({
+      intervalMs: POLL_INTERVAL_MS,
+      windowTarget: window,
+      documentTarget: document,
+      pollOnce: async () => {
+        const response = await fetch(`/api/orders/${pollingOrderId}/status`);
         if (!response.ok) return;
         const json = await response.json();
-        if (json.order.status !== order.status && json.order.status !== "pending") {
+        if (json.order.status !== "pending") {
           router.refresh(); // wallet balance / recent activity may have changed
         }
-        setOrder((prev) => (prev ? { ...prev, ...json.order } : prev));
-      } catch {
-        // Network hiccup — next tick will retry.
-      }
-    }, POLL_INTERVAL_MS);
-
-    return () => {
-      if (pollTimer.current) clearTimeout(pollTimer.current);
-    };
-  }, [order, router]);
+        setOrder((prev) => (prev && prev.id === pollingOrderId ? { ...prev, ...json.order } : prev));
+      },
+    });
+  }, [pollingOrderId, router]);
 
   async function handleCancel() {
     if (!order) return;
@@ -142,6 +200,14 @@ export function ActiveNumberPanel({ order: initialOrder }: { order: ActiveOrder 
     try {
       const response = await fetch(`/api/orders/${order.id}/cancel`, { method: "POST" });
       if (response.ok) {
+        const json = await response.json().catch(() => null);
+        // The cancel route returns the order instead of refunding when 5sim
+        // already had the SMS (see app/api/orders/[id]/cancel/route.ts) —
+        // show the code right away rather than waiting on the next poll.
+        if (json?.order?.status === "sms_received") {
+          setCodeArrivedOnCancel(true);
+          setOrder((prev) => (prev && prev.id === json.order.id ? { ...prev, ...json.order } : prev));
+        }
         router.refresh();
       }
     } finally {
@@ -170,6 +236,9 @@ export function ActiveNumberPanel({ order: initialOrder }: { order: ActiveOrder 
       </div>
       <p className="mt-2 font-technical text-xl text-ink">{order.phoneNumber}</p>
 
+      {order.status === "sms_received" && order.otpCode && codeArrivedOnCancel && (
+        <p className="mt-3 text-sm text-good">Your code arrived! This order completed instead of being cancelled.</p>
+      )}
       {order.status === "sms_received" && order.otpCode && (
         <div className="mt-3 flex items-center gap-3">
           <p className="font-technical text-2xl font-bold text-good">{order.otpCode}</p>

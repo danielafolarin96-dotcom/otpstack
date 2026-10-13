@@ -1,12 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/types/database";
-import { cancelOrder } from "@/lib/5sim/client";
+import { cancelOrder, checkOrder, FiveSimError, type FiveSimOrder } from "@/lib/5sim/client";
 import { expireAndRefundOrder } from "./expire-and-refund";
 
-vi.mock("@/lib/5sim/client", () => ({
-  cancelOrder: vi.fn(),
-}));
+vi.mock("@/lib/5sim/client", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/5sim/client")>();
+  return { FiveSimError: actual.FiveSimError, cancelOrder: vi.fn(), checkOrder: vi.fn() };
+});
+
+const EXPIRES_AT = "2026-10-12T02:10:53.000Z";
 
 const ORDER = {
   id: "order-1",
@@ -16,16 +19,36 @@ const ORDER = {
   upstream_cost_kobo: 45_000,
   service_id: "service-1",
   country_code: "usa",
+  expires_at: EXPIRES_AT,
 };
 
-// The "orders" table is updated twice per call: once to atomically claim
-// the row (update -> eq(id) -> eq(status) -> select -> maybeSingle), and
-// once afterward to record whether the upstream cancel succeeded (update ->
-// eq(id), awaited directly, no select). Distinguish the two by payload
-// shape rather than call order, so this fake also works when two calls
+function upstreamOrder(sms: FiveSimOrder["sms"]): FiveSimOrder {
+  return {
+    id: 999,
+    phone: "+10000000000",
+    operator: "virtual63",
+    product: "signal",
+    price: 0.14,
+    status: sms && sms.length > 0 ? "RECEIVED" : "PENDING",
+    expires: "2026-10-12T02:27:53.000Z",
+    sms,
+    created_at: "2026-10-12T02:07:53.000Z",
+    country: "usa",
+  };
+}
+
+// The "orders" table is updated twice per refunding call: once to
+// atomically claim the row (update -> eq(id) -> eq(status) -> select ->
+// maybeSingle), and once afterward to record whether the upstream cancel
+// succeeded (update -> eq(id), awaited directly, no select). The on-time
+// SMS path instead does a single sms_received claim with the same chain.
+// Distinguish them by payload shape rather than call order, so this fake also works when two calls
 // race against the same simulated row (see the race-guard test below).
 function fakeAdminClient(options: {
   claimResult: { data: unknown; error: unknown } | (() => { data: unknown; error: unknown });
+  deliverResult?: { data: unknown; error: unknown };
+  onDeliver?: (payload: Record<string, unknown>) => void;
+  onMark?: (payload: Record<string, unknown>) => void;
   ledgerInsertResult?: { error: unknown };
   markResult?: { error: unknown };
   financeLookupResult?: { data: unknown; error: unknown };
@@ -35,6 +58,9 @@ function fakeAdminClient(options: {
 }) {
   const {
     claimResult,
+    deliverResult = { data: null, error: null },
+    onDeliver,
+    onMark,
     ledgerInsertResult = { error: null },
     markResult = { error: null },
     financeLookupResult = { data: { provider: "5sim", payment_fee_kobo: 2_250 }, error: null },
@@ -48,7 +74,18 @@ function fakeAdminClient(options: {
       return {
         update: (payload: Record<string, unknown>) => {
           if ("upstream_cancel_succeeded" in payload) {
+            onMark?.(payload);
             return { eq: () => Promise.resolve(markResult) };
+          }
+          if (payload.status === "sms_received") {
+            onDeliver?.(payload);
+            return {
+              eq: () => ({
+                eq: () => ({
+                  select: () => ({ maybeSingle: () => Promise.resolve(deliverResult) }),
+                }),
+              }),
+            };
           }
           return {
             eq: () => ({
@@ -94,6 +131,9 @@ function fakeAdminClient(options: {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // Default: 5sim reports no SMS yet, so every pre-existing test below
+  // exercises the ordinary expire + refund path unchanged.
+  vi.mocked(checkOrder).mockResolvedValue(upstreamOrder([]));
 });
 
 describe("expireAndRefundOrder", () => {
@@ -252,5 +292,151 @@ describe("expireAndRefundOrder", () => {
     });
 
     await expect(expireAndRefundOrder(client, ORDER)).resolves.toEqual({ refunded: true });
+  });
+
+  describe("pre-refund 5sim SMS check (Oct 2026 money bug fix)", () => {
+    it("records an on-time SMS as sms_received with the code — no refund, no cancel attempt", async () => {
+      vi.mocked(checkOrder).mockResolvedValue(
+        upstreamOrder([{ created_at: "2026-10-12T02:08:31.701Z", sender: "9192145402", code: "482913" }]),
+      );
+      let deliverPayload: Record<string, unknown> | undefined;
+      const callOrder: string[] = [];
+      const client = fakeAdminClient({
+        claimResult: { data: { ...ORDER, status: "expired_refunded" }, error: null },
+        deliverResult: { data: { ...ORDER, status: "sms_received", otp_code: "482913" }, error: null },
+        onDeliver: (payload) => {
+          deliverPayload = payload;
+        },
+        callOrder,
+      });
+
+      const result = await expireAndRefundOrder(client, ORDER);
+
+      expect(result).toEqual({ refunded: false, smsReceived: true });
+      expect(deliverPayload).toMatchObject({ status: "sms_received", otp_code: "482913" });
+      expect(deliverPayload?.completed_at).toEqual(expect.any(String));
+      expect(cancelOrder).not.toHaveBeenCalled();
+      expect(callOrder).toEqual([]); // no wallet_transactions / finance_events writes
+    });
+
+    it("treats an SMS landing exactly at expires_at as on time", async () => {
+      vi.mocked(checkOrder).mockResolvedValue(upstreamOrder([{ created_at: EXPIRES_AT, code: "111111" }]));
+      const client = fakeAdminClient({
+        claimResult: { data: { ...ORDER, status: "expired_refunded" }, error: null },
+        deliverResult: { data: { ...ORDER, status: "sms_received" }, error: null },
+      });
+
+      await expect(expireAndRefundOrder(client, ORDER)).resolves.toEqual({ refunded: false, smsReceived: true });
+      expect(cancelOrder).not.toHaveBeenCalled();
+    });
+
+    it("refunds as before when the SMS arrived after expires_at (late by our own terms)", async () => {
+      vi.mocked(checkOrder).mockResolvedValue(
+        upstreamOrder([{ created_at: "2026-10-12T02:10:54.000Z", code: "111111" }]),
+      );
+      vi.mocked(cancelOrder).mockRejectedValue(new FiveSimError("/user/cancel/999", 400, "order has sms"));
+      const onDeliver = vi.fn();
+      const callOrder: string[] = [];
+      const client = fakeAdminClient({
+        claimResult: { data: { ...ORDER, status: "expired_refunded" }, error: null },
+        onDeliver,
+        callOrder,
+      });
+
+      await expect(expireAndRefundOrder(client, ORDER)).resolves.toEqual({ refunded: true });
+      expect(onDeliver).not.toHaveBeenCalled();
+      expect(callOrder).toContain("wallet_transactions.insert");
+    });
+
+    it("refunds as before when the SMS has no parseable timestamp (not proven on time)", async () => {
+      vi.mocked(checkOrder).mockResolvedValue(upstreamOrder([{ code: "111111" }]));
+      vi.mocked(cancelOrder).mockResolvedValue({} as never);
+      const onDeliver = vi.fn();
+      const client = fakeAdminClient({
+        claimResult: { data: { ...ORDER, status: "expired_refunded" }, error: null },
+        onDeliver,
+      });
+
+      await expect(expireAndRefundOrder(client, ORDER)).resolves.toEqual({ refunded: true });
+      expect(onDeliver).not.toHaveBeenCalled();
+    });
+
+    it("refunds as before when the 5sim check itself fails", async () => {
+      vi.mocked(checkOrder).mockRejectedValue(new Error("5sim unreachable"));
+      vi.mocked(cancelOrder).mockResolvedValue({} as never);
+      const callOrder: string[] = [];
+      const client = fakeAdminClient({
+        claimResult: { data: { ...ORDER, status: "expired_refunded" }, error: null },
+        callOrder,
+      });
+
+      await expect(expireAndRefundOrder(client, ORDER)).resolves.toEqual({ refunded: true });
+      expect(cancelOrder).toHaveBeenCalledWith("999");
+      expect(callOrder).toContain("wallet_transactions.insert");
+    });
+
+    it("reports refunded:false (not smsReceived) when another path resolved the order before the SMS could be recorded", async () => {
+      vi.mocked(checkOrder).mockResolvedValue(
+        upstreamOrder([{ created_at: "2026-10-12T02:08:31.701Z", code: "482913" }]),
+      );
+      const callOrder: string[] = [];
+      const client = fakeAdminClient({
+        claimResult: { data: { ...ORDER, status: "expired_refunded" }, error: null },
+        deliverResult: { data: null, error: null },
+        callOrder,
+      });
+
+      await expect(expireAndRefundOrder(client, ORDER)).resolves.toEqual({ refunded: false });
+      expect(cancelOrder).not.toHaveBeenCalled();
+      expect(callOrder).toEqual([]);
+    });
+
+    it("throws if recording the on-time SMS fails outright", async () => {
+      vi.mocked(checkOrder).mockResolvedValue(
+        upstreamOrder([{ created_at: "2026-10-12T02:08:31.701Z", code: "482913" }]),
+      );
+      const client = fakeAdminClient({
+        claimResult: { data: { ...ORDER, status: "expired_refunded" }, error: null },
+        deliverResult: { data: null, error: { message: "db down" } },
+      });
+
+      await expect(expireAndRefundOrder(client, ORDER)).rejects.toMatchObject({ message: "db down" });
+      expect(cancelOrder).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("upstream_cancel_error", () => {
+    it("stores 5sim's error message when the upstream cancel fails", async () => {
+      vi.mocked(cancelOrder).mockRejectedValue(new FiveSimError("/user/cancel/999", 400, "order has sms"));
+      let markPayload: Record<string, unknown> | undefined;
+      const client = fakeAdminClient({
+        claimResult: { data: { ...ORDER, status: "expired_refunded" }, error: null },
+        onMark: (payload) => {
+          markPayload = payload;
+        },
+      });
+
+      await expireAndRefundOrder(client, ORDER);
+
+      expect(markPayload).toEqual({
+        upstream_cancel_succeeded: false,
+        upstream_cancel_error: "5sim /user/cancel/999 failed: 400 order has sms",
+      });
+    });
+
+    it("stores null when the upstream cancel succeeds", async () => {
+      vi.mocked(cancelOrder).mockResolvedValue({} as never);
+      let markPayload: Record<string, unknown> | undefined;
+      const client = fakeAdminClient({
+        claimResult: { data: { ...ORDER, status: "expired_refunded" }, error: null },
+        onMark: (payload) => {
+          markPayload = payload;
+        },
+      });
+
+      await expireAndRefundOrder(client, ORDER);
+
+      expect(markPayload).toEqual({ upstream_cancel_succeeded: true, upstream_cancel_error: null });
+    });
   });
 });

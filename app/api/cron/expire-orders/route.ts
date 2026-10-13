@@ -58,12 +58,16 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "Failed to fetch expired orders" }, { status: 500 });
   }
 
-  const results = { processed: 0, skipped: 0, failed: 0 };
+  const results = { processed: 0, delivered: 0, skipped: 0, failed: 0 };
   for (const order of expiredOrders ?? []) {
     try {
-      const { refunded } = await expireAndRefundOrder(admin, order);
+      const { refunded, smsReceived } = await expireAndRefundOrder(admin, order);
       if (refunded) {
         results.processed += 1;
+      } else if (smsReceived) {
+        // 5sim had an on-time SMS our poll never picked up — recorded as
+        // sms_received instead of refunded (see lib/orders/upstream-sms.ts).
+        results.delivered += 1;
       } else {
         // Already resolved by another path (see expireAndRefundOrder's
         // comment) — not a failure, just nothing for this sweep to do.

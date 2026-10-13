@@ -62,7 +62,7 @@ describe("GET /api/cron/expire-orders", () => {
     expect(client.eq).toHaveBeenCalledWith("status", "pending");
     expect(client.eq).not.toHaveBeenCalledWith("id", expect.anything());
     expect(expireAndRefundOrder).toHaveBeenCalledTimes(2);
-    expect(json).toEqual({ processed: 2, skipped: 0, failed: 0 });
+    expect(json).toEqual({ processed: 2, delivered: 0, skipped: 0, failed: 0 });
   });
 
   it("counts an order that another path already resolved as skipped, not processed", async () => {
@@ -71,7 +71,18 @@ describe("GET /api/cron/expire-orders", () => {
     const response = await GET(makeRequest());
     const json = await response.json();
 
-    expect(json).toEqual({ processed: 1, skipped: 1, failed: 0 });
+    expect(json).toEqual({ processed: 1, delivered: 0, skipped: 1, failed: 0 });
+  });
+
+  it("counts an order whose on-time SMS was found upstream as delivered, not skipped or processed", async () => {
+    vi.mocked(expireAndRefundOrder)
+      .mockResolvedValueOnce({ refunded: true })
+      .mockResolvedValueOnce({ refunded: false, smsReceived: true });
+
+    const response = await GET(makeRequest());
+    const json = await response.json();
+
+    expect(json).toEqual({ processed: 1, delivered: 1, skipped: 0, failed: 0 });
   });
 
   it("counts a thrown error as failed without aborting the rest of the sweep", async () => {
@@ -82,7 +93,7 @@ describe("GET /api/cron/expire-orders", () => {
     const response = await GET(makeRequest());
     const json = await response.json();
 
-    expect(json).toEqual({ processed: 1, skipped: 0, failed: 1 });
+    expect(json).toEqual({ processed: 1, delivered: 0, skipped: 0, failed: 1 });
   });
 
   it("scopes to a single order when orderId is given — the QStash one-shot callback path", async () => {
@@ -95,7 +106,7 @@ describe("GET /api/cron/expire-orders", () => {
 
     expect(client.eq).toHaveBeenCalledWith("id", "order-a");
     expect(expireAndRefundOrder).toHaveBeenCalledTimes(1);
-    expect(json).toEqual({ processed: 1, skipped: 0, failed: 0 });
+    expect(json).toEqual({ processed: 1, delivered: 0, skipped: 0, failed: 0 });
   });
 
   it("also accepts POST — QStash's publishJSON delivers its one-shot callback via POST, not GET", async () => {
@@ -107,6 +118,6 @@ describe("GET /api/cron/expire-orders", () => {
     const json = await response.json();
 
     expect(client.eq).toHaveBeenCalledWith("id", "order-a");
-    expect(json).toEqual({ processed: 1, skipped: 0, failed: 0 });
+    expect(json).toEqual({ processed: 1, delivered: 0, skipped: 0, failed: 0 });
   });
 });
