@@ -373,6 +373,60 @@ describe("purchaseNumber", () => {
     expect(buyActivation).not.toHaveBeenCalled();
   });
 
+  it("reports the exact shortfall on a 402 — price minus current balance", async () => {
+    // Price is 89,600 kobo (see the fee test above); balance 50,000 -> 39,600 short.
+    const configs = baseConfigs();
+    configs.wallets = { data: { balance_kobo: 50_000 }, error: null };
+    const client = fakeAdminClient(configs, baseRpcResult());
+
+    await expect(purchaseNumber(client, purchaseParams())).rejects.toMatchObject({
+      status: 402,
+      reason: "insufficient_balance",
+      shortfallKobo: 39_600,
+    });
+  });
+
+  it("treats a missing wallet row as a zero balance for the shortfall", async () => {
+    const configs = baseConfigs();
+    configs.wallets = { data: null, error: null };
+    const client = fakeAdminClient(configs, baseRpcResult());
+
+    await expect(purchaseNumber(client, purchaseParams())).rejects.toMatchObject({
+      status: 402,
+      shortfallKobo: 89_600,
+    });
+  });
+
+  it("stores the rate the operator was judged on (rate168) in fivesim_operator_rate, not the overall rate", async () => {
+    const op = { operator: "virtual2", cost: 0.28, count: 100, rate: 11, rate168: 30 };
+    vi.mocked(getOperatorPrices).mockResolvedValue({ recommended: op, options: [op] });
+    const client = fakeAdminClient(baseConfigs(), baseRpcResult());
+
+    await purchaseNumber(client, purchaseParams());
+
+    expect(client.rpc).toHaveBeenCalledWith(
+      "create_order_and_debit_wallet",
+      expect.objectContaining({ p_fivesim_operator_rate: 30 }),
+    );
+  });
+
+  it.each([
+    ["concurrent cap", { orders: { data: null, error: null, count: 3 } }, "concurrent_order"],
+    ["frozen account", { users: { data: { is_frozen: true }, error: null } }, "other"],
+  ] as const)("tags the %s failure with reason %s", async (_label, override, reason) => {
+    const client = fakeAdminClient({ ...baseConfigs(), ...override }, baseRpcResult());
+    await expect(purchaseNumber(client, purchaseParams())).rejects.toMatchObject({ reason });
+  });
+
+  it("tags an operator that dropped out of the options as operator_unavailable", async () => {
+    vi.mocked(getOperatorPrices).mockResolvedValue({ recommended: null, options: [] });
+    const client = fakeAdminClient(baseConfigs(), baseRpcResult());
+
+    await expect(purchaseNumber(client, purchaseParams())).rejects.toMatchObject({
+      reason: "operator_unavailable",
+    });
+  });
+
   it("rejects with 502 and touches nothing else when the 5sim buy call itself fails", async () => {
     vi.mocked(buyActivation).mockRejectedValue(new Error("5sim: out of stock"));
     const client = fakeAdminClient(baseConfigs(), baseRpcResult());
@@ -399,8 +453,41 @@ describe("purchaseNumber", () => {
     await expect(purchaseNumber(client, purchaseParams())).rejects.toMatchObject({
       status: 502,
       message: "No numbers currently available for this service/country — try again shortly or pick a different country.",
+      reason: "upstream_no_numbers",
+      internalMessage: "5sim /user/buy/activation/england/ee/tiktok failed: 200 no free phones",
     });
     expect(client.rpc).not.toHaveBeenCalled();
+  });
+
+  it("tags 5sim's 'not enough user balance' as provider_balance, with the customer message unchanged", async () => {
+    // That string is about our 5sim account running dry, not the
+    // customer's wallet — logged distinctly so it's easy to spot.
+    vi.mocked(buyActivation).mockRejectedValue(
+      new FiveSimError("/user/buy/activation/nigeria/virtual2/whatsapp", 400, "not enough user balance"),
+    );
+    const client = fakeAdminClient(baseConfigs(), baseRpcResult());
+
+    await expect(purchaseNumber(client, purchaseParams())).rejects.toMatchObject({
+      status: 502,
+      message: "Something went wrong purchasing this number — please try again.",
+      reason: "provider_balance",
+      internalMessage: expect.stringContaining("not enough user balance"),
+    });
+    expect(client.rpc).not.toHaveBeenCalled();
+  });
+
+  it("tags any other 5sim buy failure as reason other, keeping the raw text server-side only", async () => {
+    vi.mocked(buyActivation).mockRejectedValue(
+      new FiveSimError("/user/buy/activation/nigeria/virtual2/whatsapp", 400, "bad operator"),
+    );
+    const client = fakeAdminClient(baseConfigs(), baseRpcResult());
+
+    await expect(purchaseNumber(client, purchaseParams())).rejects.toMatchObject({
+      status: 502,
+      message: "Something went wrong purchasing this number — please try again.",
+      reason: "other",
+      internalMessage: expect.stringContaining("bad operator"),
+    });
   });
 
   it("cancels upstream and reports insufficient balance when the RPC's atomic debit loses a balance race", async () => {
@@ -409,10 +496,14 @@ describe("purchaseNumber", () => {
       error: { message: "sync_wallet_balance: balance would go negative for user_id x", code: "P0001" },
     });
 
-    await expect(purchaseNumber(client, purchaseParams())).rejects.toMatchObject({
+    const err = await purchaseNumber(client, purchaseParams()).catch((e: unknown) => e);
+    expect(err).toMatchObject({
       status: 402,
       message: "Insufficient wallet balance",
+      reason: "insufficient_balance",
     });
+    // The balance moved under us, so there's no trustworthy shortfall to offer.
+    expect((err as PurchaseError).shortfallKobo).toBeUndefined();
     expect(cancelOrder).toHaveBeenCalledWith(String(FIVESIM_ORDER.id));
   });
 
@@ -435,5 +526,7 @@ describe("PurchaseError", () => {
     const err = new PurchaseError("nope", 418);
     expect(err.message).toBe("nope");
     expect(err.status).toBe(418);
+    expect(err.reason).toBe("other");
+    expect(err.shortfallKobo).toBeUndefined();
   });
 });

@@ -1,12 +1,27 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   buyActivation,
+  clearGuestPricesCache,
   customerFacingPurchaseErrorMessage,
   FiveSimError,
   getOperatorPrices,
   getProductPrices,
+  GUEST_PRICES_CACHE_TTL_MS,
+  judgedRate,
   rankOperators,
 } from "./client";
+
+beforeEach(() => {
+  clearGuestPricesCache();
+});
+
+function mockPricesResponse(body: unknown) {
+  return vi.fn().mockResolvedValue({
+    ok: true,
+    status: 200,
+    text: () => Promise.resolve(JSON.stringify(body)),
+  } as Response);
+}
 
 describe("rankOperators", () => {
   it("excludes an operator right below the 20 floor, includes one right at it", () => {
@@ -106,6 +121,66 @@ describe("rankOperators", () => {
     expect(result.options).toEqual([]);
     expect(result.recommended).toBeNull();
   });
+
+  describe("7-day rate168", () => {
+    it("is eligible on rate 11 when rate168 is 30 — the floor is judged on rate168", () => {
+      const result = rankOperators({ op: { cost: 0.1, count: 10, rate: 11, rate168: 30 } });
+      expect(result.options.map((o) => o.operator)).toEqual(["op"]);
+    });
+
+    it("is not eligible on rate 30 when rate168 is 5", () => {
+      const result = rankOperators({ op: { cost: 0.1, count: 10, rate: 30, rate168: 5 } });
+      expect(result.options).toEqual([]);
+      expect(result.recommended).toBeNull();
+    });
+
+    it("falls back to rate when rate168 is missing", () => {
+      const result = rankOperators({
+        noRate168Good: { cost: 0.1, count: 10, rate: 25 },
+        noRate168Bad: { cost: 0.1, count: 10, rate: 15 },
+      });
+      expect(result.options.map((o) => o.operator)).toEqual(["noRate168Good"]);
+    });
+
+    it("treats rate168 0 as a real (failing) value, not as missing", () => {
+      const result = rankOperators({ op: { cost: 0.1, count: 10, rate: 90, rate168: 0 } });
+      expect(result.options).toEqual([]);
+    });
+
+    it("still treats an operator with neither rate nor rate168 as unrated", () => {
+      const result = rankOperators({
+        unrated: { cost: 0.05, count: 10 },
+        rated: { cost: 1, count: 10, rate168: 21 },
+      });
+      expect(result.options.map((o) => o.operator)).toEqual(["rated", "unrated"]);
+    });
+
+    it("ranks by rate168 when present, not by the overall rate", () => {
+      const result = rankOperators({
+        highOverallLowRecent: { cost: 0.1, count: 10, rate: 95, rate168: 40 },
+        lowOverallHighRecent: { cost: 0.1, count: 10, rate: 25, rate168: 80 },
+        overallOnly: { cost: 0.1, count: 10, rate: 60 },
+      });
+      expect(result.options.map((o) => o.operator)).toEqual([
+        "lowOverallHighRecent",
+        "overallOnly",
+        "highOverallLowRecent",
+      ]);
+    });
+
+    it("keeps both raw rate fields on the returned options", () => {
+      const result = rankOperators({ op: { cost: 0.1, count: 10, rate: 11, rate168: 30 } });
+      expect(result.recommended).toEqual({ operator: "op", cost: 0.1, count: 10, rate: 11, rate168: 30 });
+    });
+  });
+});
+
+describe("judgedRate", () => {
+  it("prefers rate168, falls back to rate, undefined when neither", () => {
+    expect(judgedRate({ rate: 11, rate168: 30 })).toBe(30);
+    expect(judgedRate({ rate: 11 })).toBe(11);
+    expect(judgedRate({})).toBeUndefined();
+  });
 });
 
 describe("getProductPrices — now sellable on usa/whatsapp, usa/telegram, and malaysia/whatsapp once something clears 20", () => {
@@ -137,7 +212,7 @@ describe("getProductPrices — now sellable on usa/whatsapp, usa/telegram, and m
     });
   });
 
-  it("omits a product entirely when nothing clears 20 and nothing is unrated", async () => {
+  it("keeps a listed product as null (not omitted) when nothing clears 20 and nothing is unrated", async () => {
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
@@ -155,7 +230,70 @@ describe("getProductPrices — now sellable on usa/whatsapp, usa/telegram, and m
     } as Response);
 
     const prices = await getProductPrices("usa");
-    expect(prices.whatsapp).toBeUndefined();
+    expect(prices).toHaveProperty("whatsapp", null);
+  });
+
+  it("keeps a listed but fully out-of-stock product as null, and leaves products 5sim doesn't list absent", async () => {
+    global.fetch = mockPricesResponse({
+      usa: { telegram: { virtual51: { cost: 0.9, count: 0, rate: 90 } } },
+    });
+
+    const prices = await getProductPrices("usa");
+    expect(prices).toHaveProperty("telegram", null);
+    expect(prices).not.toHaveProperty("whatsapp");
+  });
+});
+
+describe("getProductPrices — 60s cache", () => {
+  const originalFetch = global.fetch;
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+    vi.useRealTimers();
+  });
+
+  const BODY = { usa: { whatsapp: { virtual28: { cost: 1, count: 10, rate: 50 } } } };
+
+  it("serves repeat calls for the same country from cache within 60s, and refetches after", async () => {
+    vi.useFakeTimers();
+    global.fetch = mockPricesResponse(BODY);
+
+    await getProductPrices("usa");
+    await getProductPrices("usa");
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+
+    vi.advanceTimersByTime(GUEST_PRICES_CACHE_TTL_MS + 1);
+    await getProductPrices("usa");
+    expect(global.fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("caches per country", async () => {
+    global.fetch = mockPricesResponse(BODY);
+
+    await getProductPrices("usa");
+    await getProductPrices("england");
+    expect(global.fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not cache a failed fetch", async () => {
+    global.fetch = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: false, status: 503, text: () => Promise.resolve("server offline") } as Response)
+      .mockResolvedValue({ ok: true, status: 200, text: () => Promise.resolve(JSON.stringify(BODY)) } as Response);
+
+    await expect(getProductPrices("usa")).rejects.toBeInstanceOf(FiveSimError);
+    const prices = await getProductPrices("usa");
+    expect(prices.whatsapp?.operator).toBe("virtual28");
+    expect(global.fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("never serves getOperatorPrices (picker / purchase re-validation) from the cache", async () => {
+    global.fetch = mockPricesResponse(BODY);
+
+    await getProductPrices("usa");
+    await getOperatorPrices("usa", "whatsapp");
+    await getOperatorPrices("usa", "whatsapp");
+    expect(global.fetch).toHaveBeenCalledTimes(3);
   });
 });
 

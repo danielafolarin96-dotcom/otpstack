@@ -55,20 +55,40 @@ export interface FiveSimOperatorPrice {
   // `rate` means "no data reported," not "confirmed unreliable," and is
   // treated as neutral (not disqualifying) below.
   rate?: number;
+  // 5sim's 7-day delivery rate. Preferred over `rate` whenever present (see
+  // judgedRate) — a recent window reflects how the operator is delivering
+  // now, not an all-time average a bad week can hide inside. Not verified
+  // as always-present on a live response, so absence falls back to `rate`.
+  rate168?: number;
 }
 
-export type FiveSimProductPrices = Record<string, FiveSimOperatorPrice>;
+// Each product maps to its recommended operator, or null when 5sim lists
+// the product in this country but nothing is in stock / clears the floor.
+// A product 5sim doesn't list for this country at all is absent entirely —
+// the catalog hides those instead of showing them as unavailable.
+export type FiveSimProductPrices = Record<string, FiveSimOperatorPrice | null>;
+
+type FiveSimRawOperatorPrice = { cost: number; count: number; rate?: number; rate168?: number };
 
 interface FiveSimGuestPricesResponse {
   [country: string]: {
     [product: string]: {
-      [operator: string]: { cost: number; count: number; rate?: number };
+      [operator: string]: FiveSimRawOperatorPrice;
     };
   };
 }
 
-// Minimum overall delivery success rate (5sim's per-operator `rate` field,
-// a percentage) an operator must clear to be *offered to the customer at
+// The delivery rate the floor and the ranking are both judged on: the
+// 7-day `rate168` when 5sim reports it, else the overall `rate`. undefined
+// (neither reported) means unrated. This is also the value stored in
+// orders.fivesim_operator_rate (see lib/orders/purchase.ts), so the stored
+// rate is always the one the operator was actually judged on.
+export function judgedRate(price: { rate?: number; rate168?: number }): number | undefined {
+  return price.rate168 ?? price.rate;
+}
+
+// Minimum delivery success rate (judgedRate: 5sim's 7-day `rate168`,
+// falling back to the overall `rate` — a percentage) an operator must clear to be *offered to the customer at
 // all* — below this, hidden entirely rather than ranked low. Replaces the
 // old auto-pick model this file used to have: a 70% floor
 // (MIN_ACCEPTABLE_DELIVERY_RATE) with a silent fallback to the cheapest
@@ -88,8 +108,8 @@ export interface RankedOperators {
   // null when options is empty — nothing in stock clears the floor, and
   // no unrated operator exists either.
   recommended: FiveSimOperatorPrice | null;
-  // In-stock, rate undefined or >= MIN_ACCEPTABLE_RATE, sorted
-  // recommended-first: every rated operator first (highest rate, ties
+  // In-stock, judgedRate undefined or >= MIN_ACCEPTABLE_RATE, sorted
+  // recommended-first: every rated operator first (highest judgedRate, ties
   // broken by lower cost), then every unrated operator (lowest cost
   // first). An unrated operator only ever ranks first overall — i.e. is
   // ever "recommended" — when no rated operator clears the floor; a
@@ -104,24 +124,22 @@ export interface RankedOperators {
 // the full `options` list). Keeping both on this one function is
 // deliberate: the tile and the picker must never disagree about which
 // operator is "the" price or the recommendation.
-export function rankOperators(
-  operators: Record<string, { cost: number; count: number; rate?: number }>,
-): RankedOperators {
+export function rankOperators(operators: Record<string, FiveSimRawOperatorPrice>): RankedOperators {
   const inStock = Object.entries(operators)
     .filter(([, price]) => price.count > 0)
-    .map(([operator, price]) => ({ operator, ...price }));
+    .map(([operator, price]) => {
+      const option: FiveSimOperatorPrice = { operator, ...price };
+      return { option, judged: judgedRate(option) };
+    });
 
-  const eligible = inStock.filter(
-    (price) => price.rate === undefined || price.rate >= MIN_ACCEPTABLE_RATE,
-  );
+  const eligible = inStock.filter((p) => p.judged === undefined || p.judged >= MIN_ACCEPTABLE_RATE);
 
-  function isRated(p: FiveSimOperatorPrice): p is FiveSimOperatorPrice & { rate: number } {
-    return p.rate !== undefined;
-  }
-  const rated = eligible.filter(isRated).sort((a, b) => b.rate - a.rate || a.cost - b.cost);
-  const unrated = eligible.filter((p) => !isRated(p)).sort((a, b) => a.cost - b.cost);
+  const rated = eligible
+    .filter((p): p is typeof p & { judged: number } => p.judged !== undefined)
+    .sort((a, b) => b.judged - a.judged || a.option.cost - b.option.cost);
+  const unrated = eligible.filter((p) => p.judged === undefined).sort((a, b) => a.option.cost - b.option.cost);
 
-  const options = [...rated, ...unrated];
+  const options = [...rated, ...unrated].map((p) => p.option);
   return { recommended: options[0] ?? null, options };
 }
 
@@ -201,21 +219,53 @@ export function getProfile(): Promise<FiveSimProfile> {
   return fiveSimFetch<FiveSimProfile>("/user/profile");
 }
 
+// 60s cache of the whole-country /guest/prices response, for
+// getProductPrices only (the catalog grid and dashboard search, which
+// re-render on every page view). getOperatorPrices deliberately bypasses
+// it: the operator picker and purchaseNumber's re-validation must see live
+// stock and rates. In-process memory rather than Next's fetch cache — a
+// whole-country response can be large enough to exceed that cache's
+// per-item size limit, and this keeps the fresh/cached split explicit in
+// one file. Per server instance, so different instances may briefly
+// disagree; 60s bounds that. In-flight promises are cached too so
+// concurrent renders share one upstream call; a failed fetch is evicted
+// immediately rather than cached.
+export const GUEST_PRICES_CACHE_TTL_MS = 60_000;
+const guestPricesCache = new Map<string, { expiresAt: number; body: Promise<FiveSimGuestPricesResponse> }>();
+
+function getCachedGuestPrices(countryCode: string): Promise<FiveSimGuestPricesResponse> {
+  const now = Date.now();
+  const hit = guestPricesCache.get(countryCode);
+  if (hit && hit.expiresAt > now) return hit.body;
+
+  const body = fiveSimFetch<FiveSimGuestPricesResponse>(`/guest/prices?country=${countryCode}`);
+  guestPricesCache.set(countryCode, { expiresAt: now + GUEST_PRICES_CACHE_TTL_MS, body });
+  body.catch(() => {
+    if (guestPricesCache.get(countryCode)?.body === body) guestPricesCache.delete(countryCode);
+  });
+  return body;
+}
+
+// Test-only: the cache is module state and would otherwise leak between tests.
+export function clearGuestPricesCache() {
+  guestPricesCache.clear();
+}
+
 // One call returns every product's price across every operator for the
 // whole country — used to price the entire catalog grid without one
 // request per service. For each product, collapses the operator list down
 // to rankOperators' `recommended` pick — see that function for the full
 // floor/ranking precedence. This is a single representative price for a
 // grid tile ("Get X from ₦Y"); the buy flow itself uses getOperatorPrices
-// below to show every option, not just this one.
+// below to show every option, not just this one. Cached for 60s — see
+// getCachedGuestPrices.
 export async function getProductPrices(countryCode: string): Promise<FiveSimProductPrices> {
-  const body = await fiveSimFetch<FiveSimGuestPricesResponse>(`/guest/prices?country=${countryCode}`);
+  const body = await getCachedGuestPrices(countryCode);
   const countryBody = body[countryCode] ?? {};
   const result: FiveSimProductPrices = {};
 
   for (const [product, operators] of Object.entries(countryBody)) {
-    const { recommended } = rankOperators(operators);
-    if (recommended) result[product] = recommended;
+    result[product] = rankOperators(operators).recommended;
   }
 
   return result;

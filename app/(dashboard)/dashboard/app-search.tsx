@@ -8,12 +8,13 @@ const RESULT_LIMIT = 8;
 
 // Pure, so it's unit-tested directly (app-search.test.ts) instead of only
 // ever exercised through the DOM — same split as active-number-panel.tsx's
-// resolveVisibleOrder. Unpriced services (price === null — 5sim has no
-// operator clearing the 20% floor in the selected country right now) are
-// still returned on a name match, same as ServiceCatalogGrid no longer
-// hiding their tile — the caller renders them greyed out and
-// non-interactive instead of excluding them, so a real service a visitor
-// searches for is never a silent "No matching services."
+// resolveVisibleOrder. Unpriced services (price === null — 5sim lists the
+// app in the selected country but has nothing in stock clearing the 20%
+// floor right now) are still returned on a name match, same as
+// ServiceCatalogGrid no longer hiding their tile — the caller renders them
+// greyed out and non-interactive instead of excluding them. Apps 5sim
+// doesn't list for the country at all never reach this list:
+// computeCatalogPrices (lib/pricing/catalog.ts) drops them upstream.
 export function filterAppSearchMatches(entries: CatalogEntry[], query: string): CatalogEntry[] {
   const normalized = query.trim().toLowerCase();
   if (normalized === "") return [];

@@ -2,8 +2,8 @@
 
 import { useState } from "react";
 
-export function TopupForm() {
-  const [amount, setAmount] = useState("");
+export function TopupForm({ initialAmountNaira }: { initialAmountNaira?: string }) {
+  const [amount, setAmount] = useState(initialAmountNaira ?? "");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 

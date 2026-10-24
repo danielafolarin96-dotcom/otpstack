@@ -1,7 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { topupAmountForShortfall } from "@/lib/paystack/validate-topup-amount";
 
 interface OperatorOption {
   operator: string;
@@ -10,6 +12,14 @@ interface OperatorOption {
 
 function formatNairaWhole(kobo: number) {
   return Math.round(kobo / 100).toLocaleString("en-NG");
+}
+
+// Exact, not rounded — "You need ₦X more" should never understate it.
+function formatNairaExact(kobo: number) {
+  return (kobo / 100).toLocaleString("en-NG", {
+    minimumFractionDigits: kobo % 100 === 0 ? 0 : 2,
+    maximumFractionDigits: 2,
+  });
 }
 
 // Opened from BuyableCatalogGrid when a customer taps "Buy" on a service —
@@ -39,6 +49,9 @@ export function OperatorPickerModal({
   const [recommendedOperator, setRecommendedOperator] = useState<string | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [purchaseError, setPurchaseError] = useState<string | null>(null);
+  // Set only on a 402 that tells us the exact shortfall (see
+  // lib/orders/purchase.ts) — replaces the plain error with a top-up offer.
+  const [shortfallKobo, setShortfallKobo] = useState<number | null>(null);
   const [buying, setBuying] = useState(false);
 
   useEffect(() => {
@@ -85,6 +98,7 @@ export function OperatorPickerModal({
   async function handleConfirm() {
     if (!selected) return;
     setPurchaseError(null);
+    setShortfallKobo(null);
     setBuying(true);
     try {
       const response = await fetch("/api/orders", {
@@ -96,6 +110,9 @@ export function OperatorPickerModal({
 
       if (!response.ok) {
         setPurchaseError(json.error ?? "Purchase failed.");
+        if (response.status === 402 && typeof json.shortfallKobo === "number" && json.shortfallKobo > 0) {
+          setShortfallKobo(json.shortfallKobo);
+        }
         setBuying(false);
         return;
       }
@@ -208,10 +225,22 @@ export function OperatorPickerModal({
               })}
             </div>
 
-            {purchaseError && (
-              <p className="rounded-[10px] border border-line bg-danger/10 px-4 py-3 text-sm text-danger">
-                {purchaseError}
-              </p>
+            {shortfallKobo !== null ? (
+              <div className="flex flex-col gap-3 rounded-[10px] border border-line bg-danger/10 px-4 py-3">
+                <p className="text-sm text-danger">You need ₦{formatNairaExact(shortfallKobo)} more.</p>
+                <Link
+                  href={`/dashboard/wallet?amount=${topupAmountForShortfall(shortfallKobo) / 100}`}
+                  className="w-full rounded-[10px] bg-ink px-4 py-2.5 text-center text-sm font-semibold text-paper transition-opacity hover:opacity-90"
+                >
+                  Top up ₦{formatNairaWhole(topupAmountForShortfall(shortfallKobo))}
+                </Link>
+              </div>
+            ) : (
+              purchaseError && (
+                <p className="rounded-[10px] border border-line bg-danger/10 px-4 py-3 text-sm text-danger">
+                  {purchaseError}
+                </p>
+              )
             )}
 
             <button

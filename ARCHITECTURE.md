@@ -97,6 +97,8 @@ usa/whatsapp briefly (2026-09-23 to 2026-09-24) had a hardcoded pin to a specifi
 
 malaysia/whatsapp was added to the same set on 2026-09-24, pre-emptively rather than in response to refunds — it has zero historical orders. A live check found the same underlying shape anyway: its only in-stock operator (virtual34) has a 0% delivery rate across every window 5sim reports, and the general fallback would have silently sold through it the first time anyone bought the route. Checking a route's live `/guest/prices` shape before it accumulates refund history — not just after — is now the expected practice for any route that looks similarly thin (one in-stock operator, well under 70%) before adding it here.
 
+**Current rule (Oct 2026):** the model above was later replaced by a customer-facing operator picker (see `rankOperators` in `lib/5sim/client.ts`): the floor is `MIN_ACCEPTABLE_RATE` = 20 with no fallback and no per-route blocks. Since 2026-10-22 the floor and the ranking are both judged on 5sim's 7-day `rate168` when present, falling back to the overall `rate` when it's missing (neither = unrated, not excluded); that judged value is what `orders.fivesim_operator_rate` stores. `rate168` was added on the user's instruction and its presence on live `/guest/prices` responses hasn't been independently confirmed here. The catalog grid and dashboard search read `/guest/prices?country=` through a 60-second in-process cache (`getProductPrices`); the operator picker and purchase re-validation (`getOperatorPrices`) always fetch fresh.
+
 **Purchase**
 | Endpoint | Method | Purpose |
 |---|---|---|

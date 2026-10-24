@@ -364,6 +364,50 @@ export type Database = {
           },
         ]
       }
+      purchase_failures: {
+        Row: {
+          country_code: string | null
+          created_at: string
+          http_status: number
+          id: string
+          message: string | null
+          operator: string | null
+          reason: string
+          service_id: string | null
+          user_id: string
+        }
+        Insert: {
+          country_code?: string | null
+          created_at?: string
+          http_status: number
+          id?: string
+          message?: string | null
+          operator?: string | null
+          reason: string
+          service_id?: string | null
+          user_id: string
+        }
+        Update: {
+          country_code?: string | null
+          created_at?: string
+          http_status?: number
+          id?: string
+          message?: string | null
+          operator?: string | null
+          reason?: string
+          service_id?: string | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "purchase_failures_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       rate_limits: {
         Row: {
           count: number

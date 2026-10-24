@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { MIN_TOPUP_KOBO } from "@/lib/paystack/validate-topup-amount";
 import { TopupForm } from "./topup-form";
 import { TransactionsTable } from "./transactions-table";
 import { PaymentStatusPoller } from "./payment-status-poller";
@@ -6,9 +7,18 @@ import { PaymentStatusPoller } from "./payment-status-poller";
 export default async function WalletPage({
   searchParams,
 }: {
-  searchParams: Promise<{ reference?: string | string[] }>;
+  searchParams: Promise<{ reference?: string | string[]; amount?: string | string[] }>;
 }) {
-  const { reference: rawReference } = await searchParams;
+  const { reference: rawReference, amount: rawAmount } = await searchParams;
+  // ?amount=<whole naira> pre-fills the top-up form — set by the operator
+  // picker's "Top up" button after an insufficient-balance purchase. Only a
+  // plain whole-naira number at or above the minimum is accepted; anything
+  // else is ignored and the form starts empty as usual.
+  const amountParam = Array.isArray(rawAmount) ? rawAmount[0] : rawAmount;
+  const initialAmountNaira =
+    amountParam && /^\d{1,7}$/.test(amountParam) && Number(amountParam) * 100 >= MIN_TOPUP_KOBO
+      ? amountParam
+      : undefined;
   // Paystack's redirect appends its own `trxref`/`reference` params on top
   // of the `reference` we already put in callback_url, so this key can show
   // up twice in the URL — Next.js then hands us a string[] here instead of
@@ -64,7 +74,7 @@ export default async function WalletPage({
           </p>
         </div>
 
-        <TopupForm />
+        <TopupForm initialAmountNaira={initialAmountNaira} />
       </div>
 
       <TransactionsTable transactions={transactions ?? []} />

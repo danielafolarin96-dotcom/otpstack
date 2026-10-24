@@ -2,7 +2,7 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/types/database";
 import { fetchAllPricingRules, fetchLatestFxRate, priceFromRulesAndRate, type ResolvedPrice } from "./engine";
-import { getOperatorPrices, getProductPrices, type FiveSimOperatorPrice } from "@/lib/5sim/client";
+import { getOperatorPrices, getProductPrices, judgedRate, type FiveSimOperatorPrice } from "@/lib/5sim/client";
 import { getBrandIcon } from "@/lib/icons/lookup";
 
 export interface CatalogService {
@@ -17,7 +17,10 @@ export interface CatalogService {
 
 export interface CatalogEntry {
   service: CatalogService;
-  price: ResolvedPrice | null; // null if 5sim doesn't currently offer this service in this country
+  // null if 5sim lists this service in this country but nothing is in stock
+  // or clears the rate floor (or 5sim couldn't be reached). Services 5sim
+  // doesn't list here at all aren't returned as entries in the first place.
+  price: ResolvedPrice | null;
 }
 
 export interface CatalogCountry {
@@ -60,9 +63,12 @@ export async function computeCatalogPrices(
 
   // 5sim being slow/unreachable shouldn't take the whole catalog page
   // down — degrade to "price unavailable" for every service rather than
-  // throwing. No caching layer yet (ARCHITECTURE.md's pricing engine step
-  // 1 wants one eventually); this is a live call on every render for now.
-  let productPrices: Awaited<ReturnType<typeof getProductPrices>> = {};
+  // throwing. getProductPrices caches 5sim's response for 60s (see
+  // lib/5sim/client.ts), so this isn't a live upstream call on every render.
+  // productPrices stays null on failure: with no response we can't tell
+  // which apps 5sim lists here, so every service shows as unavailable
+  // rather than the whole grid vanishing.
+  let productPrices: Awaited<ReturnType<typeof getProductPrices>> | null = null;
   try {
     productPrices = await getProductPrices(
       (countryResult.data as { fivesim_country_code: string }).fivesim_country_code,
@@ -71,7 +77,16 @@ export async function computeCatalogPrices(
     console.error("Failed to fetch 5sim product prices — showing catalog with no prices:", err);
   }
 
-  return services.map((row) => {
+  // A service 5sim doesn't list for this country at all is dropped, not
+  // shown as "Temporarily unavailable" — that label is only for apps 5sim
+  // does list here but that are out of stock or below the rate floor, where
+  // "check back soon" is actually true.
+  const listed = productPrices;
+  const listedServices = listed
+    ? services.filter((row) => Object.hasOwn(listed, row.fivesim_product_code))
+    : services;
+
+  return listedServices.map((row) => {
     const brandIcon = getBrandIcon(row.icon_key);
     const service: CatalogService = {
       id: row.id,
@@ -83,7 +98,7 @@ export async function computeCatalogPrices(
       iconIsNearWhite: brandIcon?.isNearWhite ?? false,
     };
 
-    const upstreamProduct = productPrices[row.fivesim_product_code];
+    const upstreamProduct = listed?.[row.fivesim_product_code];
     if (!upstreamProduct) {
       return { service, price: null };
     }
@@ -156,7 +171,7 @@ export async function computeOperatorPrices(
         amount: opt.cost,
         currency: "USD",
       }),
-      ratePct: opt.rate ?? null,
+      ratePct: judgedRate(opt) ?? null,
     };
   }
 

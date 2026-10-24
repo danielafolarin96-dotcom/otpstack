@@ -1,7 +1,14 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/types/database";
-import { buyActivation, cancelOrder, customerFacingPurchaseErrorMessage, getOperatorPrices } from "@/lib/5sim/client";
+import {
+  buyActivation,
+  cancelOrder,
+  customerFacingPurchaseErrorMessage,
+  getOperatorPrices,
+  judgedRate,
+} from "@/lib/5sim/client";
+import type { PurchaseFailureReason } from "./purchase-failures";
 import { fetchAllPricingRules, fetchLatestFxRate, priceFromRulesAndRate } from "@/lib/pricing/engine";
 import { computeFeeKobo, fetchActiveFeeSchedule } from "@/lib/finance/fee-schedule";
 import { scheduleOrderExpiry } from "@/lib/qstash/client";
@@ -34,12 +41,32 @@ const QSTASH_CALLBACK_PADDING_SECONDS = 10;
 const MAX_CONCURRENT_ORDERS_PER_USER = 3;
 const UPSTREAM_CURRENCY_PAIR = "USD_NGN"; // 5sim prices observed in USD — see lib/5sim/client.ts
 
+export interface PurchaseErrorOptions {
+  // Short code recorded in purchase_failures (lib/orders/purchase-failures.ts).
+  reason?: PurchaseFailureReason;
+  // 402 only: how much more the wallet needs, in kobo — sent to the client
+  // so it can offer a pre-filled top-up. Absent when unknown (the RPC's
+  // balance-race path, where the balance moved under us).
+  shortfallKobo?: number;
+  // Server-side detail for purchase_failures.message (e.g. 5sim's raw
+  // response) — never sent to the client; `message` is what the customer sees.
+  internalMessage?: string;
+}
+
 export class PurchaseError extends Error {
+  public reason: PurchaseFailureReason;
+  public shortfallKobo?: number;
+  public internalMessage?: string;
+
   constructor(
     message: string,
     public status: number = 400,
+    options: PurchaseErrorOptions = {},
   ) {
     super(message);
+    this.reason = options.reason ?? "other";
+    this.shortfallKobo = options.shortfallKobo;
+    this.internalMessage = options.internalMessage;
   }
 }
 
@@ -105,6 +132,7 @@ export async function purchaseNumber(
     throw new PurchaseError(
       `You can only hold ${MAX_CONCURRENT_ORDERS_PER_USER} active numbers at once — finish or let one expire first`,
       429,
+      { reason: "concurrent_order" },
     );
   }
 
@@ -136,6 +164,7 @@ export async function purchaseNumber(
     throw new PurchaseError(
       `That operator is no longer available for ${service.name} in ${country.name} — please choose another.`,
       409,
+      { reason: "operator_unavailable" },
     );
   }
 
@@ -161,8 +190,12 @@ export async function purchaseNumber(
     .eq("user_id", params.userId)
     .maybeSingle();
   if (walletError) throw walletError;
-  if (!wallet || wallet.balance_kobo < resolved.priceKobo) {
-    throw new PurchaseError("Insufficient wallet balance", 402);
+  const balanceKobo = wallet?.balance_kobo ?? 0;
+  if (balanceKobo < resolved.priceKobo) {
+    throw new PurchaseError("Insufficient wallet balance", 402, {
+      reason: "insufficient_balance",
+      shortfallKobo: resolved.priceKobo - balanceKobo,
+    });
   }
 
   // Point of no return — this spends real money on 5sim's side. Nothing
@@ -187,7 +220,17 @@ export async function purchaseNumber(
       `5sim buyActivation failed for ${service.fivesim_product_code}/${country.fivesim_country_code}:`,
       err,
     );
-    throw new PurchaseError(customerFacingPurchaseErrorMessage(errorMessage(err)), 502);
+    const rawMessage = errorMessage(err);
+    const lowerMessage = rawMessage.toLowerCase();
+    throw new PurchaseError(customerFacingPurchaseErrorMessage(rawMessage), 502, {
+      reason: lowerMessage.includes("no free phones")
+        ? "upstream_no_numbers"
+        : // Our 5sim account is out of funds, not the customer's wallet.
+          lowerMessage.includes("not enough user balance")
+          ? "provider_balance"
+          : "other",
+      internalMessage: rawMessage,
+    });
   }
 
   // 5sim's actual charged price can differ from the quote we just computed
@@ -214,12 +257,13 @@ export async function purchaseNumber(
     p_expires_at: expiresAt,
     p_metadata: { fivesim_order_id: fivesimOrder.id, service: service.name, country: country.name },
     // The customer's chosen operator (re-validated above, see
-    // getOperatorPrices) and its rate at purchase time — also what lets
+    // getOperatorPrices) and the rate it was judged on at purchase time
+    // (judgedRate: 7-day rate168, else overall rate) — also what lets
     // margin-report.ts and future passes join actual order outcomes
-    // (sms_received vs expired/cancelled) against the rate shown when the
-    // customer picked it.
+    // (sms_received vs expired/cancelled) against the rate that cleared
+    // the floor.
     p_fivesim_operator: upstreamProduct.operator,
-    p_fivesim_operator_rate: upstreamProduct.rate,
+    p_fivesim_operator_rate: judgedRate(upstreamProduct),
     p_payment_fee_kobo: paymentFeeKobo,
     p_fee_schedule_id: feeSchedule?.id,
     p_provider: service.provider,
@@ -228,11 +272,11 @@ export async function purchaseNumber(
   if (rpcError || !order) {
     await safeCancelUpstream(fivesimOrder.id);
     const message = errorMessage(rpcError);
+    const lostBalanceRace = message.includes("negative");
     throw new PurchaseError(
-      message.includes("negative")
-        ? "Insufficient wallet balance"
-        : "Failed to record the purchase — it was reversed",
-      message.includes("negative") ? 402 : 500,
+      lostBalanceRace ? "Insufficient wallet balance" : "Failed to record the purchase — it was reversed",
+      lostBalanceRace ? 402 : 500,
+      { reason: lostBalanceRace ? "insufficient_balance" : "other", internalMessage: message },
     );
   }
 

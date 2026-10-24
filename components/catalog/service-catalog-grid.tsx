@@ -103,9 +103,10 @@ export function ServiceCatalogGrid({
   initialQuery,
 }: {
   entries: CatalogGridEntry[];
-  // Used only for an unavailable tile's message below — the 20% floor
-  // (lib/5sim/client.ts's MIN_ACCEPTABLE_RATE) is unchanged, this just
-  // stops hiding the tile entirely when nothing clears it.
+  // Used only for an unavailable tile's message below — shown for apps 5sim
+  // lists in this country but that are out of stock or below the 20% floor
+  // (lib/5sim/client.ts's MIN_ACCEPTABLE_RATE). Apps 5sim doesn't list here
+  // at all are already dropped by computeCatalogPrices, never greyed out.
   countryName: string;
   onBuy?: (serviceId: string) => void;
   buyingServiceId?: string | null;

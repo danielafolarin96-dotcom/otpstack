@@ -1,12 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/types/database";
-import { getOperatorPrices } from "@/lib/5sim/client";
-import { computeOperatorPrices } from "./catalog";
+import { getOperatorPrices, getProductPrices } from "@/lib/5sim/client";
+import { computeCatalogPrices, computeOperatorPrices } from "./catalog";
 
 vi.mock("@/lib/5sim/client", async () => {
   const actual = await vi.importActual<typeof import("@/lib/5sim/client")>("@/lib/5sim/client");
-  return { ...actual, getOperatorPrices: vi.fn() };
+  return { ...actual, getOperatorPrices: vi.fn(), getProductPrices: vi.fn() };
 });
 
 const SERVICE = { fivesim_product_code: "whatsapp" };
@@ -78,6 +78,16 @@ describe("computeOperatorPrices", () => {
     expect(result!.options[1].ratePct).toBe(25);
   });
 
+  it("reports the rate the operator was judged on — rate168 when present", async () => {
+    const op = { operator: "virtual28", cost: 1, count: 100, rate: 11, rate168: 30 };
+    vi.mocked(getOperatorPrices).mockResolvedValue({ recommended: op, options: [op] });
+    const client = fakeAdminClient(baseConfigs());
+
+    const result = await computeOperatorPrices(client, "service-1", "country-1");
+
+    expect(result!.recommended.ratePct).toBe(30);
+  });
+
   it("surfaces an unrated operator's ratePct as null, not 0 or undefined-as-missing", async () => {
     vi.mocked(getOperatorPrices).mockResolvedValue({
       recommended: { operator: "newOp", cost: 0.2, count: 5 },
@@ -129,5 +139,48 @@ describe("computeOperatorPrices", () => {
     await expect(computeOperatorPrices(client, "service-1", "country-1")).rejects.toThrow(
       "5sim: connection reset",
     );
+  });
+});
+
+describe("computeCatalogPrices", () => {
+  const serviceRow = (name: string, code: string) => ({
+    id: `svc-${code}`,
+    name,
+    category: "Messaging",
+    icon_key: code,
+    fivesim_product_code: code,
+  });
+  const catalogConfigs = () => ({
+    ...baseConfigs(),
+    services: {
+      data: [serviceRow("Telegram", "telegram"), serviceRow("WeChat", "wechat"), serviceRow("WhatsApp", "whatsapp")],
+      error: null,
+    },
+  });
+
+  it("prices listed+available apps, keeps listed-but-unavailable apps as price:null, and drops apps 5sim doesn't list here", async () => {
+    vi.mocked(getProductPrices).mockResolvedValue({
+      whatsapp: { operator: "virtual28", cost: 1, count: 100, rate: 42 },
+      telegram: null, // listed in this country, but out of stock / below the floor
+      // wechat: not listed for this country at all
+    });
+    const client = fakeAdminClient(catalogConfigs());
+
+    const entries = await computeCatalogPrices(client, "country-1");
+
+    expect(entries.map((e) => e.service.name)).toEqual(["Telegram", "WhatsApp"]);
+    expect(entries.find((e) => e.service.name === "Telegram")!.price).toBeNull();
+    expect(entries.find((e) => e.service.name === "WhatsApp")!.price!.priceKobo).toBe(320_000);
+    expect(getProductPrices).toHaveBeenCalledWith("usa");
+  });
+
+  it("shows every service as unavailable (none hidden) when 5sim can't be reached — no listing to filter by", async () => {
+    vi.mocked(getProductPrices).mockRejectedValue(new Error("5sim: connection reset"));
+    const client = fakeAdminClient(catalogConfigs());
+
+    const entries = await computeCatalogPrices(client, "country-1");
+
+    expect(entries.map((e) => e.service.name)).toEqual(["Telegram", "WeChat", "WhatsApp"]);
+    expect(entries.every((e) => e.price === null)).toBe(true);
   });
 });
