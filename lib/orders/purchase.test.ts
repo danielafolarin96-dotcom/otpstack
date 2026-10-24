@@ -72,16 +72,33 @@ const FIVESIM_ORDER = {
 
 const CHOSEN_OPERATOR = { operator: "virtual2", cost: 0.28, count: 100, rate: 80 };
 
+type TableConfig = {
+  data: unknown;
+  error: unknown;
+  count?: number;
+  // When set, eq/in/gt filters are actually applied to these rows and
+  // `count` is the number that match, so tests can assert on what a
+  // query selects rather than just on a canned count.
+  rows?: Record<string, unknown>[];
+};
+
 function fakeAdminClient(
-  configs: Record<string, { data: unknown; error: unknown; count?: number }>,
+  configs: Record<string, TableConfig>,
   rpcResult: { data: unknown; error: unknown },
 ) {
   const from = vi.fn((table: string) => {
-    const result = configs[table] ?? { data: null, error: null };
+    const config = configs[table] ?? { data: null, error: null };
+    let rows = config.rows;
+    const filter = (pred: (row: Record<string, unknown>) => boolean) => {
+      if (rows) rows = rows.filter(pred);
+      return builder;
+    };
+    const current = () => (rows ? { ...config, count: rows.length } : config);
     const builder: {
       select: () => typeof builder;
-      eq: () => typeof builder;
-      in: () => typeof builder;
+      eq: (col: string, value: unknown) => typeof builder;
+      in: (col: string, values: unknown[]) => typeof builder;
+      gt: (col: string, value: string) => typeof builder;
       lte: () => typeof builder;
       order: () => typeof builder;
       limit: () => typeof builder;
@@ -90,14 +107,16 @@ function fakeAdminClient(
       then: (resolve: (v: unknown) => void) => void;
     } = {
       select: () => builder,
-      eq: () => builder,
-      in: () => builder,
+      eq: (col, value) => filter((row) => row[col] === value),
+      in: (col, values) => filter((row) => values.includes(row[col])),
+      // ISO-8601 timestamps compare correctly as strings.
+      gt: (col, value) => filter((row) => String(row[col]) > value),
       lte: () => builder,
       order: () => builder,
       limit: () => builder,
-      maybeSingle: () => Promise.resolve(result),
-      single: () => Promise.resolve(result),
-      then: (resolve) => resolve(result),
+      maybeSingle: () => Promise.resolve(current()),
+      single: () => Promise.resolve(current()),
+      then: (resolve) => resolve(current()),
     };
     return builder;
   });
@@ -105,7 +124,7 @@ function fakeAdminClient(
   return { from, rpc } as unknown as SupabaseClient<Database>;
 }
 
-const baseConfigs = (): Record<string, { data: unknown; error: unknown; count?: number }> => ({
+const baseConfigs = (): Record<string, TableConfig> => ({
   users: { data: { is_frozen: false }, error: null },
   orders: { data: null, error: null, count: 0 },
   services: { data: SERVICE, error: null },
@@ -295,6 +314,43 @@ describe("purchaseNumber", () => {
     await expect(purchaseNumber(client, purchaseParams())).rejects.toMatchObject({ status: 429 });
     expect(getOperatorPrices).not.toHaveBeenCalled();
     expect(buyActivation).not.toHaveBeenCalled();
+  });
+
+  describe("concurrent-order limit", () => {
+    const orderRows = (status: string, expiresInMs: number) =>
+      Array.from({ length: 3 }, (_, i) => ({
+        id: `order-${status}-${i}`,
+        user_id: "user-1",
+        status,
+        expires_at: new Date(Date.now() + expiresInMs).toISOString(),
+      }));
+
+    it("lets a user with 3 delivered (sms_received) orders and none pending buy", async () => {
+      const configs = baseConfigs();
+      configs.orders = { data: null, error: null, rows: orderRows("sms_received", -60 * 60_000) };
+      const client = fakeAdminClient(configs, baseRpcResult());
+
+      await purchaseNumber(client, purchaseParams());
+      expect(buyActivation).toHaveBeenCalled();
+    });
+
+    it("blocks a user holding 3 unexpired pending orders", async () => {
+      const configs = baseConfigs();
+      configs.orders = { data: null, error: null, rows: orderRows("pending", 2 * 60_000) };
+      const client = fakeAdminClient(configs, baseRpcResult());
+
+      await expect(purchaseNumber(client, purchaseParams())).rejects.toMatchObject({ status: 429 });
+      expect(buyActivation).not.toHaveBeenCalled();
+    });
+
+    it("lets a user buy when their 3 pending orders are already past expires_at", async () => {
+      const configs = baseConfigs();
+      configs.orders = { data: null, error: null, rows: orderRows("pending", -60_000) };
+      const client = fakeAdminClient(configs, baseRpcResult());
+
+      await purchaseNumber(client, purchaseParams());
+      expect(buyActivation).toHaveBeenCalled();
+    });
   });
 
   it("rejects with 404 when the service doesn't exist or is inactive", async () => {

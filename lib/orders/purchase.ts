@@ -93,7 +93,13 @@ export async function purchaseNumber(
     .from("orders")
     .select("id", { count: "exact", head: true })
     .eq("user_id", params.userId)
-    .in("status", ["pending", "sms_received"]);
+    // Only numbers still held count. sms_received is terminal (the code was
+    // delivered and the status never changes again), so counting it blocked
+    // any user with 3 successful orders permanently. Pending rows past
+    // expires_at are also excluded: the expiry callback may not have flipped
+    // them yet, but the hold is already over.
+    .eq("status", "pending")
+    .gt("expires_at", new Date().toISOString());
   if (concurrentOrdersError) throw concurrentOrdersError;
   if ((concurrentOrders ?? 0) >= MAX_CONCURRENT_ORDERS_PER_USER) {
     throw new PurchaseError(
