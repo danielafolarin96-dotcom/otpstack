@@ -75,8 +75,8 @@ export function MarginByServiceTable({ rows, target }: { rows: ServiceMarginRow[
           <tbody>
             {filteredRows.map((row) => {
               // Compare the same rounded value that's displayed — otherwise
-              // a row can show "44.7%" (rounded from 44.698...) yet be
-              // colored as below a 44.7% target, which reads as a bug.
+              // a row can show "50.0%" (rounded from 49.96...) yet be
+              // colored as below a 50% target, which reads as a bug.
               const displayMarginPct = Number(row.marginPct.toFixed(1));
               const belowTarget = displayMarginPct < target;
               return (

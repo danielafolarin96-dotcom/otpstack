@@ -6,15 +6,16 @@ import { marginPct } from "./calculate";
 // computed moments earlier (see lib/orders/purchase.ts), so the 30% floor
 // enforced at quote time doesn't guarantee 30% is what actually lands. This
 // is what actually did land.
-// The 44.7% standing markup target (80.83% markup -- see
-// scripts/apply-margin-reprice.mjs and ARCHITECTURE.md's Pricing engine
-// section), not the 30% min_margin_pct floor it can still fall back to --
-// this page reports against what pricing is actually supposed to achieve,
-// not the fallback minimum. WhatsApp/USA, WhatsApp/Australia, and
-// TikTok/UK are excluded from that target and still governed by their own
-// flat_kobo overrides + the 30% floor, so their rows will legitimately
-// show lower without it meaning anything is wrong.
-export const TARGET_MARGIN_PCT = 44.7;
+// The 50% standing margin target (100% markup, price = 2x cost -- see
+// supabase/migrations/20261022120000_reprice_to_50pct_margin_everywhere.sql
+// and ARCHITECTURE.md's Pricing engine section), not the 30% min_margin_pct
+// floor it can still fall back to -- this page reports against what pricing
+// is actually supposed to achieve, not the fallback minimum. Every pricing
+// rule, including the former flat_kobo service_country overrides
+// (WhatsApp/USA, WhatsApp/Australia, Telegram/UK, TikTok/UK), now uses that
+// same 100% markup, so a row below target means 5sim charged more than the
+// quote (see above), not a rule that's deliberately priced lower.
+export const TARGET_MARGIN_PCT = 50;
 
 // expired_refunded/cancelled_refunded give the user their price_kobo back
 // (see the expire-and-refund and cancel routes) — that revenue isn't ours
