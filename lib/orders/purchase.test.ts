@@ -270,6 +270,51 @@ describe("purchaseNumber", () => {
     );
   });
 
+  describe("funding rate", () => {
+    const withRates = (market: number, funding: { provider: string; ngn_per_usd: number }[]) => {
+      const configs = baseConfigs();
+      configs.fx_rates = { data: { rate: market }, error: null };
+      configs.provider_funding_rates = { data: funding, error: null };
+      return configs;
+    };
+
+    it("prices and records upstream cost at the funding rate when market is lower", async () => {
+      const client = fakeAdminClient(withRates(1353, [{ provider: "5sim", ngn_per_usd: 1562 }]), baseRpcResult());
+
+      await purchaseNumber(client, purchaseParams());
+
+      // 0.28 USD * 1562 = 43,736 kobo cost; 100% markup -> 87,472 kobo.
+      expect(client.rpc).toHaveBeenCalledWith(
+        "create_order_and_debit_wallet",
+        expect.objectContaining({ p_price_kobo: 87_472, p_upstream_cost_kobo: 43_736 }),
+      );
+    });
+
+    it("uses the market rate when it is above the funding rate", async () => {
+      const client = fakeAdminClient(withRates(1700, [{ provider: "5sim", ngn_per_usd: 1562 }]), baseRpcResult());
+
+      await purchaseNumber(client, purchaseParams());
+
+      // 0.28 USD * 1700 = 47,600 kobo cost; 100% markup -> 95,200 kobo.
+      expect(client.rpc).toHaveBeenCalledWith(
+        "create_order_and_debit_wallet",
+        expect.objectContaining({ p_price_kobo: 95_200, p_upstream_cost_kobo: 47_600 }),
+      );
+    });
+
+    it("falls back to market when the service's provider has no funding row", async () => {
+      const client = fakeAdminClient(withRates(1353, [{ provider: "grizzly", ngn_per_usd: 1562 }]), baseRpcResult());
+
+      await purchaseNumber(client, purchaseParams());
+
+      // 0.28 USD * 1353 = 37,884 kobo cost; 100% markup -> 75,768 kobo.
+      expect(client.rpc).toHaveBeenCalledWith(
+        "create_order_and_debit_wallet",
+        expect.objectContaining({ p_price_kobo: 75_768, p_upstream_cost_kobo: 37_884 }),
+      );
+    });
+  });
+
   it("defaults the payment fee to 0 when no fee schedule is configured, without blocking the purchase", async () => {
     const configs = baseConfigs();
     configs.payment_fee_schedules = { data: null, error: null };

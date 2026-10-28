@@ -9,7 +9,7 @@ vi.mock("@/lib/5sim/client", async () => {
   return { ...actual, getOperatorPrices: vi.fn(), getProductPrices: vi.fn() };
 });
 
-const SERVICE = { fivesim_product_code: "whatsapp" };
+const SERVICE = { fivesim_product_code: "whatsapp", provider: "5sim" };
 const COUNTRY = { fivesim_country_code: "usa" };
 const GLOBAL_RULE = {
   id: "global-rule",
@@ -28,6 +28,7 @@ function fakeAdminClient(configs: Record<string, { data: unknown; error: unknown
     const builder: {
       select: () => typeof builder;
       eq: () => typeof builder;
+      lte: () => typeof builder;
       order: () => typeof builder;
       limit: () => typeof builder;
       maybeSingle: () => Promise<unknown>;
@@ -35,6 +36,7 @@ function fakeAdminClient(configs: Record<string, { data: unknown; error: unknown
     } = {
       select: () => builder,
       eq: () => builder,
+      lte: () => builder,
       order: () => builder,
       limit: () => builder,
       maybeSingle: () => Promise.resolve(result),
@@ -76,6 +78,21 @@ describe("computeOperatorPrices", () => {
     expect(result!.recommended.price.priceKobo).toBe(320_000);
     expect(result!.recommended.ratePct).toBe(42);
     expect(result!.options[1].ratePct).toBe(25);
+  });
+
+  it("prices from the provider's funding rate when it is above market", async () => {
+    const op = { operator: "virtual28", cost: 1, count: 100, rate: 42 };
+    vi.mocked(getOperatorPrices).mockResolvedValue({ recommended: op, options: [op] });
+    const configs = baseConfigs();
+    configs.fx_rates = { data: { rate: 1353 }, error: null };
+    configs.provider_funding_rates = { data: [{ provider: "5sim", ngn_per_usd: 1562 }], error: null };
+    const client = fakeAdminClient(configs);
+
+    const result = await computeOperatorPrices(client, "service-1", "country-1");
+
+    // 1 USD * 1562 = 156,200 kobo cost; 100% markup -> 312,400 kobo.
+    expect(result!.recommended.price.upstreamCostKobo).toBe(156_200);
+    expect(result!.recommended.price.priceKobo).toBe(312_400);
   });
 
   it("reports the rate the operator was judged on — rate168 when present", async () => {

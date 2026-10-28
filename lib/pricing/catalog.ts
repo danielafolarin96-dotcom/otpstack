@@ -1,7 +1,13 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/types/database";
-import { fetchAllPricingRules, fetchLatestFxRate, priceFromRulesAndRate, type ResolvedPrice } from "./engine";
+import {
+  effectiveFxRate,
+  fetchAllPricingRules,
+  fetchPricingFxRates,
+  priceFromRulesAndRate,
+  type ResolvedPrice,
+} from "./engine";
 import { getOperatorPrices, getProductPrices, judgedRate, type FiveSimOperatorPrice } from "@/lib/5sim/client";
 import { getBrandIcon } from "@/lib/icons/lookup";
 
@@ -41,11 +47,11 @@ export async function computeCatalogPrices(
   admin: SupabaseClient<Database>,
   countryId: string,
 ): Promise<CatalogEntry[]> {
-  const [servicesResult, countryResult, allRules, fxRate] = await Promise.all([
+  const [servicesResult, countryResult, allRules, fxRates] = await Promise.all([
     admin.from("services").select("*").eq("is_active", true).order("name"),
     admin.from("countries").select("fivesim_country_code").eq("id", countryId).maybeSingle(),
     fetchAllPricingRules(admin),
-    fetchLatestFxRate(admin, UPSTREAM_CURRENCY_PAIR),
+    fetchPricingFxRates(admin, UPSTREAM_CURRENCY_PAIR),
   ]);
 
   if (servicesResult.error) throw servicesResult.error;
@@ -58,6 +64,7 @@ export async function computeCatalogPrices(
     category: string;
     icon_key: string;
     fivesim_product_code: string;
+    provider: string;
   };
   const services = (servicesResult.data ?? []) as unknown as ServiceRow[];
 
@@ -103,7 +110,7 @@ export async function computeCatalogPrices(
       return { service, price: null };
     }
 
-    const price = priceFromRulesAndRate(allRules, fxRate, row.id, countryId, {
+    const price = priceFromRulesAndRate(allRules, effectiveFxRate(fxRates, row.provider), row.id, countryId, {
       amount: upstreamProduct.cost,
       currency: "USD",
     });
@@ -147,18 +154,22 @@ export async function computeOperatorPrices(
   serviceId: string,
   countryId: string,
 ): Promise<OperatorPriceList | null> {
-  const [serviceResult, countryResult, allRules, fxRate] = await Promise.all([
-    admin.from("services").select("fivesim_product_code").eq("id", serviceId).eq("is_active", true).maybeSingle(),
+  const [serviceResult, countryResult, allRules, fxRates] = await Promise.all([
+    admin.from("services").select("fivesim_product_code, provider").eq("id", serviceId).eq("is_active", true).maybeSingle(),
     admin.from("countries").select("fivesim_country_code").eq("id", countryId).eq("is_active", true).maybeSingle(),
     fetchAllPricingRules(admin),
-    fetchLatestFxRate(admin, UPSTREAM_CURRENCY_PAIR),
+    fetchPricingFxRates(admin, UPSTREAM_CURRENCY_PAIR),
   ]);
 
   if (serviceResult.error) throw serviceResult.error;
   if (countryResult.error) throw countryResult.error;
   if (!serviceResult.data || !countryResult.data) return null;
 
-  const productCode = (serviceResult.data as { fivesim_product_code: string }).fivesim_product_code;
+  const { fivesim_product_code: productCode, provider } = serviceResult.data as {
+    fivesim_product_code: string;
+    provider: string;
+  };
+  const fxRate = effectiveFxRate(fxRates, provider);
   const countryCode = (countryResult.data as { fivesim_country_code: string }).fivesim_country_code;
 
   const ranked = await getOperatorPrices(countryCode, productCode);

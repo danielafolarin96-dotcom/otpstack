@@ -9,7 +9,12 @@ import {
   judgedRate,
 } from "@/lib/5sim/client";
 import type { PurchaseFailureReason } from "./purchase-failures";
-import { fetchAllPricingRules, fetchLatestFxRate, priceFromRulesAndRate } from "@/lib/pricing/engine";
+import {
+  effectiveFxRate,
+  fetchAllPricingRules,
+  fetchPricingFxRates,
+  priceFromRulesAndRate,
+} from "@/lib/pricing/engine";
 import { computeFeeKobo, fetchActiveFeeSchedule } from "@/lib/finance/fee-schedule";
 import { scheduleOrderExpiry } from "@/lib/qstash/client";
 
@@ -168,11 +173,15 @@ export async function purchaseNumber(
     );
   }
 
-  const [allRules, fxRate, feeSchedule] = await Promise.all([
+  const [allRules, fxRates, feeSchedule] = await Promise.all([
     fetchAllPricingRules(admin),
-    fetchLatestFxRate(admin, UPSTREAM_CURRENCY_PAIR),
+    fetchPricingFxRates(admin, UPSTREAM_CURRENCY_PAIR),
     fetchActiveFeeSchedule(admin),
   ]);
+  // Real funding cost, not just the market rate (see effectiveFxRate) —
+  // used for both the price and upstream_cost_kobo below, so profit
+  // reports reflect what the provider balance actually cost us.
+  const fxRate = effectiveFxRate(fxRates, service.provider);
 
   const resolved = priceFromRulesAndRate(allRules, fxRate, service.id, country.id, {
     amount: upstreamProduct.cost,

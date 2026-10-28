@@ -205,6 +205,33 @@ export type Database = {
         }
         Relationships: []
       }
+      provider_funding_rates: {
+        Row: {
+          effective_from: string
+          id: string
+          ngn_per_usd: number
+          note: string | null
+          pair: string
+          provider: string
+        }
+        Insert: {
+          effective_from?: string
+          id?: string
+          ngn_per_usd: number
+          note?: string | null
+          pair?: string
+          provider: string
+        }
+        Update: {
+          effective_from?: string
+          id?: string
+          ngn_per_usd?: number
+          note?: string | null
+          pair?: string
+          provider?: string
+        }
+        Relationships: []
+      }
       orders: {
         Row: {
           completed_at: string | null

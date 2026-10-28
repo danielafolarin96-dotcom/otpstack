@@ -2,8 +2,11 @@ import { describe, expect, it, vi } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/types/database";
 import {
+  effectiveFxRate,
   fetchAllPricingRules,
+  fetchLatestFundingRates,
   fetchLatestFxRate,
+  fetchPricingFxRates,
   priceForServiceCountry,
   priceFromRulesAndRate,
 } from "./engine";
@@ -30,6 +33,9 @@ function fakeSupabase(options: {
   pricingRulesError?: { message: string } | null;
   fxRate?: number | null;
   fxRateError?: { message: string } | null;
+  // Rows as the query returns them: already ordered effective_from desc.
+  fundingRates?: { provider: string; ngn_per_usd: number }[];
+  fundingRatesError?: { message: string } | null;
 }) {
   const from = vi.fn((table: string) => {
     if (table === "pricing_rules") {
@@ -58,6 +64,21 @@ function fakeSupabase(options: {
                     error: options.fxRateError ?? null,
                   }),
               }),
+            }),
+          }),
+        }),
+      };
+    }
+    if (table === "provider_funding_rates") {
+      return {
+        select: () => ({
+          eq: () => ({
+            lte: () => ({
+              order: () =>
+                Promise.resolve({
+                  data: options.fundingRatesError ? null : (options.fundingRates ?? []),
+                  error: options.fundingRatesError ?? null,
+                }),
             }),
           }),
         }),
@@ -98,6 +119,38 @@ describe("fetchLatestFxRate", () => {
   });
 });
 
+describe("fetchLatestFundingRates", () => {
+  it("keeps only the latest row per provider", async () => {
+    const client = fakeSupabase({
+      fundingRates: [
+        { provider: "5sim", ngn_per_usd: 1562 },
+        { provider: "grizzly", ngn_per_usd: 1580 },
+        { provider: "5sim", ngn_per_usd: 1500 },
+      ],
+    });
+    await expect(fetchLatestFundingRates(client, "USD_NGN")).resolves.toEqual({ "5sim": 1562, grizzly: 1580 });
+  });
+
+  it("throws on a database error", async () => {
+    const client = fakeSupabase({ fundingRatesError: { message: "boom" } });
+    await expect(fetchLatestFundingRates(client, "USD_NGN")).rejects.toMatchObject({ message: "boom" });
+  });
+});
+
+describe("effectiveFxRate", () => {
+  it("uses the funding rate when it is above market", () => {
+    expect(effectiveFxRate({ market: 1353, fundingByProvider: { "5sim": 1562 } }, "5sim")).toBe(1562);
+  });
+
+  it("uses the market rate when it is above the funding rate", () => {
+    expect(effectiveFxRate({ market: 1700, fundingByProvider: { "5sim": 1562 } }, "5sim")).toBe(1700);
+  });
+
+  it("falls back to market when the provider has no funding row", () => {
+    expect(effectiveFxRate({ market: 1353, fundingByProvider: { "5sim": 1562 } }, "grizzly")).toBe(1353);
+  });
+});
+
 describe("priceFromRulesAndRate", () => {
   it("resolves a rule, converts currency, and prices the result", () => {
     const result = priceFromRulesAndRate(
@@ -129,8 +182,37 @@ describe("priceForServiceCountry", () => {
       serviceId: WHATSAPP,
       countryId: NIGERIA,
       upstreamCost: { amount: 0.3, currency: "USD" },
+      provider: "5sim",
     });
 
     expect(result.priceKobo).toBe(144_000);
+  });
+
+  it("prices at the provider's funding rate when market is lower", async () => {
+    const client = fakeSupabase({
+      pricingRules: [GLOBAL_TIERED_RULE],
+      fxRate: 1353,
+      fundingRates: [{ provider: "5sim", ngn_per_usd: 1562 }],
+    });
+
+    const result = await priceForServiceCountry(client, {
+      serviceId: WHATSAPP,
+      countryId: NIGERIA,
+      upstreamCost: { amount: 0.3, currency: "USD" },
+      provider: "5sim",
+    });
+
+    expect(result.upstreamCostKobo).toBe(46_860); // 0.30 * 1562 * 100
+    expect(result.priceKobo).toBe(140_580); // 46,860 * 3 (200% tier)
+  });
+});
+
+describe("fetchPricingFxRates", () => {
+  it("returns the market rate alongside each provider's funding rate", async () => {
+    const client = fakeSupabase({ fxRate: 1353, fundingRates: [{ provider: "5sim", ngn_per_usd: 1562 }] });
+    await expect(fetchPricingFxRates(client, "USD_NGN")).resolves.toEqual({
+      market: 1353,
+      fundingByProvider: { "5sim": 1562 },
+    });
   });
 });
