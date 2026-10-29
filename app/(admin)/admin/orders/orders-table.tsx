@@ -8,9 +8,16 @@ type AdminOrderRow = {
   status: string;
   price_kobo: number;
   created_at: string;
+  provider: string;
+  provider_supplier_id: string | null;
   services: { name: string } | null;
   users: { email: string; username: string; full_name: string } | null;
 };
+
+function providerLabel(order: AdminOrderRow): string {
+  if (order.provider !== "grizzly") return "5sim";
+  return order.provider_supplier_id ? "Grizzly · supplier " + order.provider_supplier_id : "Grizzly";
+}
 
 const STATUS_META: Record<string, { label: string; className: string }> = {
   pending: { label: "Pending", className: "bg-amber/15 text-amber" },
@@ -60,7 +67,12 @@ export function AdminOrdersTable({ orders }: { orders: AdminOrderRow[] }) {
                     <span className="text-xs text-text-dim">{order.users?.email ?? "—"}</span>
                   </div>
                 </td>
-                <td className="px-4 py-3">{order.services?.name ?? "—"}</td>
+                <td className="px-4 py-3">
+                  <div className="flex flex-col">
+                    <span>{order.services?.name ?? "—"}</span>
+                    <span className="text-xs text-text-dim">{providerLabel(order)}</span>
+                  </div>
+                </td>
                 <td className="px-4 py-3 font-technical text-text-dim">{order.phone_number}</td>
                 <td className="px-4 py-3">
                   <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${meta.className}`}>

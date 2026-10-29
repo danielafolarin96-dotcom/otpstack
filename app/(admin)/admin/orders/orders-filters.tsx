@@ -11,6 +11,11 @@ const STATUS_LABELS: Record<string, string> = {
   banned: "Banned",
 };
 
+const PROVIDER_LABELS: Record<string, string> = {
+  "5sim": "5sim",
+  grizzly: "Grizzly",
+};
+
 interface Service {
   id: string;
   name: string;
@@ -19,11 +24,13 @@ interface Service {
 export function OrdersFilters({
   services,
   statuses,
+  providers,
   selected,
 }: {
   services: Service[];
   statuses: readonly string[];
-  selected: { status?: string; serviceId?: string; userQuery?: string };
+  providers: readonly string[];
+  selected: { status?: string; serviceId?: string; userQuery?: string; provider?: string };
 }) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -83,6 +90,27 @@ export function OrdersFilters({
         </select>
       </div>
 
+      <div className="flex flex-col gap-1">
+        <label className="text-xs font-medium text-text-dim" htmlFor="provider-filter">
+          Provider
+        </label>
+        <select
+          id="provider-filter"
+          value={selected.provider ?? ""}
+          onChange={(e) => setParam("provider", e.target.value)}
+          // text-base below sm:, not text-sm alone: iOS Safari auto-zooms
+          // the page on focus of any input under 16px computed font-size.
+          className="rounded-[10px] border border-line bg-paper-raised px-3.5 py-2.5 text-base text-text focus:border-signal focus:outline-none focus:ring-1 focus:ring-signal sm:text-sm"
+        >
+          <option value="">All providers</option>
+          {providers.map((p) => (
+            <option key={p} value={p}>
+              {PROVIDER_LABELS[p] ?? p}
+            </option>
+          ))}
+        </select>
+      </div>
+
       <form
         className="flex flex-col gap-1"
         onSubmit={(e) => {
@@ -113,7 +141,7 @@ export function OrdersFilters({
         </div>
       </form>
 
-      {(selected.status || selected.serviceId || selected.userQuery) && (
+      {(selected.status || selected.serviceId || selected.userQuery || selected.provider) && (
         <button
           type="button"
           onClick={() => {

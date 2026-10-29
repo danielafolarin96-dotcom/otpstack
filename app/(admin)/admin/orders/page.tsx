@@ -10,6 +10,8 @@ const STATUSES = [
   "banned",
 ] as const;
 
+const PROVIDERS = ["5sim", "grizzly"] as const;
+
 // Two separate ilike lookups + merge instead of a single .or("email.ilike...,username.ilike...")
 // string — that string gets built from the raw search box input, and
 // PostgREST's or() syntax treats commas/parens as filter-structure
@@ -34,9 +36,9 @@ async function findUserIdsMatching(
 export default async function AdminOrdersPage({
   searchParams,
 }: {
-  searchParams: Promise<{ status?: string; service?: string; user?: string }>;
+  searchParams: Promise<{ status?: string; service?: string; user?: string; provider?: string }>;
 }) {
-  const { status, service: serviceId, user: userQuery } = await searchParams;
+  const { status, service: serviceId, user: userQuery, provider } = await searchParams;
   const admin = createAdminClient();
 
   const { data: services } = await admin.from("services").select("id, name").order("name");
@@ -56,6 +58,7 @@ export default async function AdminOrdersPage({
 
     if (status) query = query.eq("status", status as (typeof STATUSES)[number]);
     if (serviceId) query = query.eq("service_id", serviceId);
+    if (provider && (PROVIDERS as readonly string[]).includes(provider)) query = query.eq("provider", provider);
     if (matchingUserIds) query = query.in("user_id", matchingUserIds);
 
     const { data } = await query;
@@ -75,7 +78,8 @@ export default async function AdminOrdersPage({
       <OrdersFilters
         services={services ?? []}
         statuses={STATUSES}
-        selected={{ status, serviceId, userQuery }}
+        providers={PROVIDERS}
+        selected={{ status, serviceId, userQuery, provider }}
       />
 
       <AdminOrdersTable orders={orders as never} />
