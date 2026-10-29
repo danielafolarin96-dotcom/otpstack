@@ -3,17 +3,17 @@
 This file is auto-loaded by Claude Code at the start of every session in this repo. Read the following files in full before doing any work here — they are the actual project spec, not optional background:
 
 - **AGENT.md** — ground rules for how you (the coding agent) should operate in this repo: what requires a test, what requires asking first, what never to guess at.
-- **ARCHITECTURE.md** — the system spec: full DB schema, pricing engine logic, order lifecycle, and the verified 5sim + Paystack API integration contracts. This is the source of truth for how the system works.
+- **ARCHITECTURE.md** — the system spec: full DB schema, pricing engine logic, order lifecycle, and the verified 5sim, Grizzly + Paystack API integration contracts. This is the source of truth for how the system works.
 - **DESIGN.md** — color tokens, typography, layout rules, and the core screen structure (landing page + dashboard). Follow this for anything user-facing.
 - **SECURITY.md** — secret handling, payment/webhook verification, wallet ledger integrity rules, RLS policy expectations.
 - **SKILL.md** — stack, coding conventions, folder structure, local setup steps.
 - **DEVELOPMENT_PLAN.md** — the phased build order. Check which phase is current before starting new work, and don't jump ahead of unfinished phases without asking.
 
 ## Quick facts
-- Stack: Next.js (App Router, TypeScript) + Supabase (Postgres/Auth) + Paystack (funding) + 5sim.net (number inventory) + Vercel (hosting).
+- Stack: Next.js (App Router, TypeScript) + Supabase (Postgres/Auth) + Paystack (funding) + 5sim.net and Grizzly SMS (number inventory; the Big 6 apps route to Grizzly where mapped — see ARCHITECTURE.md's "Providers & routing") + Vercel (hosting).
 - All money is integer kobo. Wallet balance is never written directly — always through the `wallet_transactions` ledger.
 - Minimum-margin floor: 30%, enforced as a hard floor in the pricing engine (see ARCHITECTURE.md). The current standing target is higher than that floor — 100% markup (price = 2x 5sim cost), 50% margin — on every pricing rule with no exclusions; the former flat_kobo service_country overrides use it too (see ARCHITECTURE.md's "Pricing engine" section).
-- No email verification at signup; ₦500 minimum wallet top-up; 3-minute number hold with auto-refund on timeout.
+- No email verification at signup; ₦500 minimum wallet top-up; 5-minute number hold (both providers) with auto-refund on timeout.
 
 If anything in these docs seems to conflict with a new instruction from the user, point out the conflict rather than silently overriding the spec.
 

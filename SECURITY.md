@@ -1,7 +1,7 @@
 # OtpStack — Security Policy (SECURITY.md)
 
 ## Secrets & keys
-- `FIVESIM_API_KEY`, `PAYSTACK_SECRET_KEY`, `SUPABASE_SERVICE_ROLE_KEY` live only in Vercel environment variables (and local `.env.local`, gitignored). Never exposed to the client bundle.
+- `FIVESIM_API_KEY`, `GRIZZLY_API_KEY`, `PAYSTACK_SECRET_KEY`, `SUPABASE_SERVICE_ROLE_KEY` live only in Vercel environment variables (and local `.env.local`, gitignored). Never exposed to the client bundle.
 - Rotate a key immediately if it is ever accidentally committed or logged.
 - `PAYSTACK_PUBLIC_KEY` and `NEXT_PUBLIC_SUPABASE_ANON_KEY` are the only credentials allowed client-side.
 
@@ -16,6 +16,7 @@
 
 ## 5sim integration
 - `FIVESIM_API_KEY` is used server-side only, via `lib/5sim/client.ts`. Nothing client-side ever calls 5sim directly.
+- `GRIZZLY_API_KEY` is used server-side only, via `lib/grizzly/client.ts`. Grizzly takes the key as an `api_key` query parameter, so request URLs are never logged or put into errors, response bodies are scrubbed of the key, and `purchase_failures.message` redacts any `api_key=` value.
 - Purchase, status polling, and cancellation happen through our own API routes, which enforce ownership (a user can only check/cancel their own order) and rate limits.
 
 ## Auth & access

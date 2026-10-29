@@ -1,7 +1,7 @@
 # OtpStack — System Architecture (ARCHITECTURE.md)
 
 ## Overview
-OtpStack resells temporary phone numbers sourced from 5sim.net, priced in Nigerian Naira via a dynamic markup engine, funded through Paystack (card/bank transfer), spent from a wallet.
+OtpStack resells temporary phone numbers sourced from 5sim.net and Grizzly SMS (see "Providers & routing"), priced in Nigerian Naira via a dynamic markup engine, funded through Paystack (card/bank transfer), spent from a wallet.
 
 ## Data model (Postgres / Supabase)
 
@@ -32,20 +32,34 @@ OtpStack resells temporary phone numbers sourced from 5sim.net, priced in Nigeri
 - `user_id` (FK)
 - `service_id` (FK → services)
 - `country_code`
-- `5sim_order_id` (text — upstream id)
+- `provider` (text, `5sim` | `grizzly`) — which upstream sold the number, resolved from `provider_routes` at purchase time
+- `provider_order_id` (text — the upstream id for `provider`: 5sim order id or Grizzly activationId; unique per provider). Use this for every upstream call.
+- `fivesim_order_id` (text, nullable — legacy 5sim-only copy of `provider_order_id`; null for Grizzly orders)
+- `fivesim_operator`, `fivesim_operator_rate` (5sim only — operator bought from and the rate it was judged on)
+- `provider_supplier_id`, `upstream_quoted_usd`, `upstream_charged_usd`, `upstream_activation_time` (Grizzly only — supplier bought from, the quote sent as `maxPrice`, what Grizzly actually charged, and Grizzly's own activationTime)
+- `upstream_cancel_succeeded`, `upstream_cancel_error` (refunded orders — whether the upstream cost was recovered, and the provider's error if our cancel failed)
 - `phone_number` (text)
 - `status` (enum: `pending`, `sms_received`, `expired_refunded`, `cancelled_refunded`, `banned`)
 - `price_kobo` (bigint — what the user was charged)
 - `upstream_cost_kobo` (bigint — our cost, snapshotted at purchase time for margin reporting)
 - `otp_code` (text, nullable)
-- `expires_at` (timestamptz — created_at + 3 minutes)
+- `expires_at` (timestamptz — created_at + 5 minutes)
 - `created_at`, `completed_at`
 
 ### `services` (curated catalog, not 5sim's full list)
 - `id`, `name` (e.g. "WhatsApp"), `5sim_product_code`, `category`, `icon_key`, `is_active`
+- `provider` (default `5sim` — the fallback when no `provider_routes` row applies)
+- `grizzly_service_code` (nullable — explicit Grizzly mapping, e.g. `wa`; null = never bought from Grizzly)
 
 ### `countries` (curated)
 - `id`, `name`, `5sim_country_code`, `flag_emoji`, `is_active`
+- `grizzly_country_id` (nullable, unique — explicit Grizzly mapping, e.g. 187; null = this country stays on 5sim)
+
+### `provider_routes` (which provider sells a service, optionally per country)
+- `service_id`, `country_id` (nullable = any country), `provider`, `is_active`, `note`; unique per (service, country)
+
+### `upstream_cancel_queue` (Grizzly cancels waiting out the ~5-minute lock)
+- `provider`, `provider_order_id` (unique together), `order_id` (nullable), `reason` (`price_above_quote` | `order_record_failed` | `cancel_locked`), `not_before`, `give_up_at`, `attempts`, `last_error`, `resolved_at`, `outcome` (`cancelled` | `already_closed` | `sms_arrived` | `gave_up`)
 
 ### `pricing_rules` (the markup engine's config)
 - `id`
@@ -73,11 +87,11 @@ OtpStack resells temporary phone numbers sourced from 5sim.net, priced in Nigeri
 
 ## Order lifecycle
 1. User selects service + country -> server checks wallet balance >= current price.
-2. Server calls 5sim to purchase a number -> debits wallet (ledger entry, type=`purchase`) -> creates an `orders` row, `status=pending`, `expires_at = now() + 3 min`.
-3. Server polls 5sim for SMS status (short interval, e.g. every 3-5s) until a code arrives or `expires_at` passes. A QStash one-shot callback (see `lib/qstash/client.ts`) is also scheduled at purchase time to hit `/api/cron/expire-orders` shortly after `expires_at`, so the sweep below runs promptly per-order instead of waiting on a slower backstop.
+2. Server resolves the provider (`provider_routes`), calls it to purchase a number -> debits wallet (ledger entry, type=`purchase`) -> creates an `orders` row, `status=pending`, `expires_at = now() + 5 min`.
+3. Server polls the provider for SMS status (short interval, e.g. every 3-5s) until a code arrives or `expires_at` passes. A QStash one-shot callback (see `lib/qstash/client.ts`) is also scheduled at purchase time to hit `/api/cron/expire-orders` shortly after `expires_at`, so the sweep below runs promptly per-order instead of waiting on a slower backstop.
 4. **Code arrives:** store `otp_code`, `status=sms_received`, `completed_at=now()`.
-5. **No code by `expires_at`:** a scheduled sweep (`/api/cron/expire-orders`) finds expired `pending` orders, cancels them upstream, sets `status=expired_refunded`, and writes a `refund` ledger entry crediting the wallet. Triggered on a layered set of schedules, not Vercel Cron alone — see that route's own comment for why (Vercel's Hobby plan only allows a once-daily cron, far too infrequent against this 3-minute TTL and 5sim's own ~5-minute no-SMS timeout, see the 5sim integration section below).
-6. User can also manually cancel a still-`pending` order before expiry for the same refund treatment (`status=cancelled_refunded`).
+5. **No code by `expires_at`:** a scheduled sweep (`/api/cron/expire-orders`) finds expired `pending` orders, first re-checks upstream (an SMS that arrived inside the window is delivered instead of refunded), then cancels them upstream, sets `status=expired_refunded`, and writes a `refund` ledger entry crediting the wallet. If the cancel fails but the provider shows the order already closed with no SMS, the cost still counts as recovered (`upstream_cancel_succeeded = true`, error kept). A Grizzly cancel that hits Grizzly's lock is queued in `upstream_cancel_queue` and retried; a later success writes a `provider_cost_recovered` finance event. Triggered on a layered set of schedules, not Vercel Cron alone — see that route's own comment for why (Vercel's Hobby plan only allows a once-daily cron, far too infrequent against this 5-minute TTL, see the 5sim integration section below).
+6. User can also manually cancel a still-`pending` 5sim order before expiry for the same refund treatment (`status=cancelled_refunded`). Grizzly orders can't be cancelled by the customer (Grizzly locks cancel for the whole 5-minute hold): the cancel route returns 409 and the dashboard shows "Refunds automatically if no code arrives" instead of the button.
 
 ## 5sim integration (verified against 5sim.net/docs, Sept 2026 — endpoint paths confirmed live)
 - Base URL: `https://5sim.net/v1`
@@ -124,9 +138,27 @@ malaysia/whatsapp was added to the same set on 2026-09-24, pre-emptively rather 
 
 **Status values:** 5sim's `check` endpoint returns a status string per order (commonly `PENDING`, `RECEIVED`, `CANCELED`, `TIMEOUT`, `FINISHED`, `BANNED` in their ecosystem) — confirm the exact set and casing with a live test call early in Phase 4, then map it to our internal `orders.status` enum rather than storing 5sim's raw string directly.
 - 5sim does not push webhooks for SMS arrival — our own polling job (hitting `/user/check/{id}`) is the source of truth for "did the code arrive yet."
-- **Cancel/hold window (confirmed, Sept 2026):** 5sim's own docs (`/docs`, "Buy activation number" -> Request limits) state "Maximum waiting time is 15 minutes. Timeout no sms 5 minute" — an activation order auto-transitions to `TIMEOUT` upstream around 5 minutes after purchase if no SMS has arrived, well before the `expires` field on the order itself (observed as `created_at + 20 min` on every live order checked) actually elapses. `/user/cancel/{id}` only succeeds while the order is still cancellable upstream; once 5sim has already flipped it to `TIMEOUT`, cancel fails (`400 order expired`) and the upstream cost is not recoverable. Empirically confirmed against 12 real refunded orders: every `cancelOrder` call made within ~4 minutes of purchase succeeded; the one made at ~15 minutes (the pre-fix daily-sweep case) had already timed out upstream and failed. **This is why the customer-facing TTL was shortened from 10 to 3 minutes (Oct 2026, `lib/orders/purchase.ts`'s `ORDER_TTL_MINUTES`)** — a 10-minute hold was always longer than 5sim's ~5-minute no-SMS window, so a refund issued near the end of it almost never recovered the upstream cost. 3 minutes leaves roughly 2 minutes of headroom under that ~5-minute window for the per-order QStash callback (`lib/qstash/client.ts`'s `scheduleOrderExpiry`, scheduled at purchase time, padded 10s past `expires_at` for delivery jitter) to actually land a cancel call in time. The sweep-frequency fix (see `.github/workflows/expire-orders.yml` and the cron route's comment) remains the backstop for when that callback doesn't land; `lib/pricing/margin-report.ts`'s recovered-vs-lost split exists to keep this measurable rather than assumed.
+- **Cancel/hold window (Sept 2026, corrected 29 Oct 2026):** 5sim's own docs (`/docs`, "Buy activation number" -> Request limits) state "Maximum waiting time is 15 minutes. Timeout no sms 5 minute" — an activation order auto-transitions to `TIMEOUT` upstream around 5 minutes after purchase if no SMS has arrived, and from then on `/user/cancel/{id}` fails (`400 order expired`). In Sept 2026 that was read as "the upstream cost is not recoverable", and the customer-facing TTL was cut from 10 to 3 minutes so our cancel would land first. **That reading was wrong:** a read-only reconciliation of 5sim's own payment history (`/user/payments`, all 29 rows 9 Sept-27 Oct, balance chain unbroken) against `/user/orders` on 29 Oct 2026 showed 5sim debits an order only when it is FINISHED (26 `buy` rows = the 26 FINISHED orders, each debited at close), and none of the 5 TIMEOUT-with-no-SMS orders — including `1090837536`, which the 14 Sept backfill marked as lost — has any debit. So a 5sim order that times out with no SMS costs us nothing. The TTL is therefore 5 minutes for both providers (`ORDER_TTL_MINUTES`, `lib/orders/purchase.ts`; QStash callback at TTL + 10s), and the refund paths record a failed cancel on a TIMEOUT/CANCELED-with-no-SMS order as cost recovered. Historical orders were not backfilled, so the Margin page still counts some pre-29-Oct TIMEOUT refunds as lost. The sweep-frequency fix (see `.github/workflows/expire-orders.yml` and the cron route's comment) remains the backstop for when the QStash callback doesn't land.
 
 Sources: [5SIM API Docs](https://5sim.net/docs), [Working with API](https://5sim.net/support/working-with-api)
+
+## Providers & routing (29 Oct 2026)
+- Two providers: 5sim and Grizzly SMS. `lib/providers/route.ts` (`pickProvider`) decides per (service, country): an active `provider_routes` row for that exact (service, country), else an active (service, any-country) row, else `services.provider`. A Grizzly result falls back to 5sim only when the service has no `grizzly_service_code` or the country no `grizzly_country_id` — there is no stock-based fallback; a Grizzly-routed product with no Grizzly stock shows as unavailable.
+- Seeded by `supabase/migrations/20261029120000_add_grizzly_provider.sql`: WhatsApp, Telegram, TikTok, Facebook, Instagram and Google -> Grizzly (any country), plus 41 per-country rows back to 5sim for pairs where 5sim had stock and Grizzly didn't (live snapshot 29 Oct 2026; revisit as stock moves). Kill switch: set the six any-country rows `is_active = false`.
+- Mapping (reviewed 29 Oct 2026): services `wa`/`tg`/`lf`/`fb`/`ig`/`go`; 78 of 80 countries mapped by name (Argentina = 39 "Argentinas", Czechia = 63 "Czech", UK = 16, USA = **187 only** — Grizzly's 12 "USA (2)" virtual pool is deliberately unmapped). Congo (Grizzly has both 18 "DR Congo" and 150 "Republic of the Congo") and Namibia (not listed) are unmapped.
+- `lib/providers/upstream.ts` gives the status poll, manual cancel, expiry, admin refund and the cancel queue one provider-neutral view (`fetchUpstreamState`, `cancelUpstream`, `finishUpstream`). `orders.provider` is what every later step dispatches on.
+- Pricing: Grizzly costs are USD, converted at `effectiveFxRate(rates, 'grizzly')` (`provider_funding_rates` 'grizzly' = 1562), through the same `pricing_rules` (100% markup).
+
+## Grizzly integration (verified against grizzlysms.com/docs, 29 Oct 2026)
+- Base: `https://api.grizzlysms.com/stubs/handler_api.php?api_key=$GRIZZLY_API_KEY&action=...` (SMS-Activate compatible). The key rides in the query string, so `lib/grizzly/client.ts` never puts a URL into an error or log and scrubs the key from response bodies.
+- Verified live (read-only, 29 Oct): `getBalance` -> `ACCESS_BALANCE:3.0000` (text/plain, USD); `getCountries`; `getServicesList`; `getPricesV3` with and without `country` (without it, one call returns every country for the service). Shape: `{country:{service:{price,count,providers:{id:{count, price:[steps], provider_id}}}}}` — the top-level `price` is a headline "from" price with little stock and is ignored.
+- From the docs only, **not yet observed live** (confirm on the first real test purchase): `getNumberV2` -> `{activationId, phoneNumber, activationCost, currency (840 = USD), countryCode, canGetAnotherSms, activationTime}`; errors as plain text (`NO_NUMBERS`, `NO_BALANCE`, `BAD_KEY`, `SERVICE_UNAVAILABLE_REGION`, ...). `getStatus` -> `STATUS_WAIT_CODE` / `STATUS_WAIT_RETRY:x` / `STATUS_WAIT_RESEND` / `STATUS_CANCEL` / `STATUS_OK:code`. `getStatusV2` -> `{verificationType, sms:{dateTime, code, text}}` (only the received case is documented). `setStatus` 8 = cancel (`ACCESS_CANCEL`), 6 = complete (`ACCESS_ACTIVATION`). The early-cancel refusal text is undocumented (SMS-Activate convention: `EARLY_CANCEL_DENIED`); any non-`ACCESS_CANCEL` answer is treated as "not cancelled".
+- Confirmed by a manual test on the Grizzly site (29 Oct 2026): cancel is locked for roughly the first 5 minutes; activations last 20 minutes; Grizzly only debits when an SMS arrives — a cancelled unused number returns the full hold.
+- **Suppliers ("Operator N"):** each supplier in stock for the service/country is one picker option, priced at its **highest** listed price step (product decision — sent as `maxPrice`, so the purchase always fills inside the quote). Sorted cheapest first; recommended = cheapest supplier with stock >= 20 (`GRIZZLY_RECOMMENDED_MIN_STOCK`), else the cheapest in stock. Grizzly reports no delivery rates; `orders.provider_supplier_id` exists so our own delivery rate per supplier can be measured.
+- **Purchase:** `getNumberV2` with `providerIds=<supplier>` and `maxPrice=<quote>`. If `activationCost` exceeds the quote or `currency` isn't 840, the customer is not debited and the activation is queued for cancel after the lock. `upstream_cost_kobo` = `activationCost` x funding rate. Failures map to `purchase_failures.reason`: `NO_BALANCE` -> `provider_balance`, `NO_NUMBERS` -> `upstream_no_numbers`, anything else -> `other`.
+- **Status:** `getStatus` drives the state; on `STATUS_OK` `getStatusV2` supplies the SMS text and `dateTime`. A delivered code is completed with `setStatus 6` (best-effort). SMS punctuality is judged on Grizzly's own clock (`sms.dateTime - activationTime`, added to our `created_at`), since Grizzly's timezone is undocumented. `STATUS_CANCEL` during a poll refunds with the cost recorded as recovered.
+- **Cancel queue** (`lib/orders/upstream-cancel-queue.ts`): abandoned purchases wait `GRIZZLY_CANCEL_LOCK_SECONDS` (330s); expiry cancels refused by the lock retry every 60s via a QStash call to `/api/cron/expire-orders?queue=1`, and every sweep also processes due rows. A row resolves when the cancel lands (`cancelled`), the activation is already cancelled (`already_closed`), an SMS arrived (`sms_arrived` — a real loss), or after 30 minutes (`gave_up`).
+- Rate limits: undocumented. The dashboard polls each pending order every 4s (one `getStatus` call; two once a code arrives).
 
 ## Paystack integration
 - Funding flow: client requests a top-up -> server creates a Paystack transaction (amount in kobo, minimum ₦500) -> client is redirected to Paystack's hosted checkout -> Paystack sends a signed webhook on completion -> server verifies signature, checks idempotency by reference, credits the wallet via a ledger entry (type=`topup`).

@@ -4,20 +4,22 @@
 - Frontend/Backend: Next.js 14+ (App Router), TypeScript strict mode
 - Database/Auth: Supabase (Postgres, Auth, Row Level Security)
 - Payments (funding): Paystack (card + bank transfer)
-- Number provider: 5sim.net API (reseller)
+- Number providers: 5sim.net API and Grizzly SMS API (reseller), routed per (service, country)
 - Hosting: Vercel (frontend + API routes / serverless functions)
 - Styling: Tailwind CSS, tokens sourced from DESIGN.md
 
 ## Conventions
 - All money values stored as integer **kobo** (₦1 = 100 kobo) — never floats, to avoid rounding errors.
 - 5sim upstream prices are stored as received alongside a computed NGN price from the pricing engine — never hardcode a fixed USD/NGN conversion; always read from `fx_rates` + `pricing_rules` (see ARCHITECTURE.md).
-- Server-only secrets (`FIVESIM_API_KEY`, `PAYSTACK_SECRET_KEY`, `SUPABASE_SERVICE_ROLE_KEY`) are only ever referenced in server components, API routes (`app/api/**/route.ts`), or server actions — never in client components, never shipped to the browser.
+- Server-only secrets (`FIVESIM_API_KEY`, `GRIZZLY_API_KEY`, `PAYSTACK_SECRET_KEY`, `SUPABASE_SERVICE_ROLE_KEY`) are only ever referenced in server components, API routes (`app/api/**/route.ts`), or server actions — never in client components, never shipped to the browser.
 - Folder structure:
   - `app/(marketing)/` — public landing page
   - `app/(dashboard)/` — authenticated user dashboard
   - `app/(admin)/` — admin panel, protected by role check
   - `app/api/` — route handlers (Paystack webhook, 5sim proxy endpoints, cron endpoints)
   - `lib/5sim/` — typed 5sim API client
+  - `lib/grizzly/` — typed Grizzly SMS API client
+  - `lib/providers/` — provider routing and provider-neutral upstream calls
   - `lib/paystack/` — typed Paystack API client
   - `lib/pricing/` — pricing engine (markup calculation)
   - `lib/wallet/` — ledger read/write helpers (append-only)
