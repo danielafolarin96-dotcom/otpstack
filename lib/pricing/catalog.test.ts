@@ -2,11 +2,18 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/types/database";
 import { getOperatorPrices, getProductPrices } from "@/lib/5sim/client";
+import { getCachedServicePrices, getSupplierPrices } from "@/lib/grizzly/client";
 import { computeCatalogPrices, computeOperatorPrices } from "./catalog";
 
 vi.mock("@/lib/5sim/client", async () => {
   const actual = await vi.importActual<typeof import("@/lib/5sim/client")>("@/lib/5sim/client");
   return { ...actual, getOperatorPrices: vi.fn(), getProductPrices: vi.fn() };
+});
+
+vi.mock("@/lib/grizzly/client", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/grizzly/client")>("@/lib/grizzly/client");
+  // rankSuppliers stays real — the tile and picker must use the same pick.
+  return { ...actual, getCachedServicePrices: vi.fn(), getSupplierPrices: vi.fn() };
 });
 
 const SERVICE = { fivesim_product_code: "whatsapp", provider: "5sim" };
@@ -199,5 +206,94 @@ describe("computeCatalogPrices", () => {
 
     expect(entries.map((e) => e.service.name)).toEqual(["Telegram", "WeChat", "WhatsApp"]);
     expect(entries.every((e) => e.price === null)).toBe(true);
+  });
+});
+
+describe("Grizzly-routed services", () => {
+  // Supplier "a" is cheapest but thin; "b" is the cheapest with >= 20 in stock.
+  const SUPPLIERS = [
+    { supplierId: "a", count: 5, prices: [0.9], cost: 0.9 },
+    { supplierId: "b", count: 40, prices: [0.8, 1], cost: 1 },
+    { supplierId: "c", count: 100, prices: [1.5], cost: 1.5 },
+  ];
+  const grizzlyConfigs = () => ({
+    ...baseConfigs(),
+    services: {
+      data: [
+        { id: "svc-signal", name: "Signal", category: "Messaging", icon_key: "signal", fivesim_product_code: "signal", provider: "5sim", grizzly_service_code: null },
+        { id: "svc-wa", name: "WhatsApp", category: "Messaging", icon_key: "whatsapp", fivesim_product_code: "whatsapp", provider: "5sim", grizzly_service_code: "wa" },
+      ],
+      error: null,
+    },
+    countries: { data: { id: "country-1", fivesim_country_code: "usa", grizzly_country_id: 187 }, error: null },
+    provider_routes: { data: [{ service_id: "svc-wa", country_id: null, provider: "grizzly", is_active: true }], error: null },
+    fx_rates: { data: { rate: 1353 }, error: null },
+    provider_funding_rates: { data: [{ provider: "grizzly", ngn_per_usd: 1562 }], error: null },
+  });
+
+  it("prices the tile from the recommended supplier (cheapest with stock >= 20) at Grizzly's funding rate, alongside 5sim apps", async () => {
+    vi.mocked(getCachedServicePrices).mockResolvedValue({ "187": SUPPLIERS });
+    vi.mocked(getProductPrices).mockResolvedValue({ signal: { operator: "virtual1", cost: 0.1, count: 10, rate: 80 } });
+    const client = fakeAdminClient(grizzlyConfigs());
+
+    const entries = await computeCatalogPrices(client, "country-1");
+
+    expect(getCachedServicePrices).toHaveBeenCalledWith("wa");
+    expect(entries.map((e) => e.service.name)).toEqual(["Signal", "WhatsApp"]);
+    // 1.00 USD * 1562 = 156,200 kobo cost; 100% markup.
+    expect(entries.find((e) => e.service.name === "WhatsApp")!.price!.priceKobo).toBe(312_400);
+    // Signal stays on 5sim at market (no 5sim funding row here): 0.1 * 1353 * 2.
+    expect(entries.find((e) => e.service.name === "Signal")!.price!.priceKobo).toBe(27_060);
+  });
+
+  it("shows a Grizzly-routed app as unavailable when Grizzly has no stock — never falls back to 5sim", async () => {
+    vi.mocked(getCachedServicePrices).mockResolvedValue({ "187": [] });
+    vi.mocked(getProductPrices).mockResolvedValue({ whatsapp: { operator: "virtual1", cost: 0.5, count: 10, rate: 80 } });
+    const client = fakeAdminClient(grizzlyConfigs());
+
+    const entries = await computeCatalogPrices(client, "country-1");
+
+    const whatsapp = entries.find((e) => e.service.name === "WhatsApp");
+    expect(whatsapp).toBeDefined();
+    expect(whatsapp!.price).toBeNull();
+  });
+
+  it("blanks only the Grizzly-routed tiles when Grizzly is unreachable", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.mocked(getCachedServicePrices).mockRejectedValue(new Error("grizzly down"));
+    vi.mocked(getProductPrices).mockResolvedValue({ signal: { operator: "virtual1", cost: 0.1, count: 10, rate: 80 } });
+    const client = fakeAdminClient(grizzlyConfigs());
+
+    const entries = await computeCatalogPrices(client, "country-1");
+
+    expect(entries.find((e) => e.service.name === "WhatsApp")!.price).toBeNull();
+    expect(entries.find((e) => e.service.name === "Signal")!.price).not.toBeNull();
+  });
+
+  it("the picker lists every in-stock supplier cheapest-first, priced from its own top step, recommending the same one as the tile", async () => {
+    vi.mocked(getSupplierPrices).mockResolvedValue(SUPPLIERS);
+    const client = fakeAdminClient({
+      ...grizzlyConfigs(),
+      services: { data: { fivesim_product_code: "whatsapp", provider: "5sim", grizzly_service_code: "wa" }, error: null },
+    });
+
+    const result = await computeOperatorPrices(client, "svc-wa", "country-1");
+
+    expect(getSupplierPrices).toHaveBeenCalledWith("wa", 187);
+    expect(getOperatorPrices).not.toHaveBeenCalled();
+    expect(result!.options.map((o) => o.operator)).toEqual(["a", "b", "c"]);
+    expect(result!.options.map((o) => o.price.priceKobo)).toEqual([281_160, 312_400, 468_600]);
+    expect(result!.recommended.operator).toBe("b");
+    expect(result!.options.every((o) => o.ratePct === null)).toBe(true);
+  });
+
+  it("the picker returns null when no Grizzly supplier is in stock", async () => {
+    vi.mocked(getSupplierPrices).mockResolvedValue([{ ...SUPPLIERS[0], count: 0 }]);
+    const client = fakeAdminClient({
+      ...grizzlyConfigs(),
+      services: { data: { fivesim_product_code: "whatsapp", provider: "5sim", grizzly_service_code: "wa" }, error: null },
+    });
+
+    expect(await computeOperatorPrices(client, "svc-wa", "country-1")).toBeNull();
   });
 });
