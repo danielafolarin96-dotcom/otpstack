@@ -15,6 +15,7 @@ const ORDER = {
   id: "order-1",
   user_id: "user-1",
   fivesim_order_id: "999",
+  provider_order_id: "999",
   price_kobo: 150_000,
   upstream_cost_kobo: 45_000,
   service_id: "service-1",

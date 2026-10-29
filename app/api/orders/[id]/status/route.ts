@@ -12,7 +12,7 @@ interface OrderRow {
   id: string;
   user_id: string;
   status: string;
-  fivesim_order_id: string;
+  provider_order_id: string;
   phone_number: string;
   otp_code: string | null;
   expires_at: string;
@@ -75,9 +75,9 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
 
   let fivesimOrder;
   try {
-    fivesimOrder = await checkOrder(order.fivesim_order_id);
+    fivesimOrder = await checkOrder(order.provider_order_id);
   } catch (err) {
-    console.error(`Failed to check 5sim order ${order.fivesim_order_id}:`, err);
+    console.error(`Failed to check 5sim order ${order.provider_order_id}:`, err);
     return NextResponse.json({ order: serialize(order) }); // degrade gracefully, keep last known state
   }
 

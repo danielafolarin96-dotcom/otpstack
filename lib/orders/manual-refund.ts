@@ -78,11 +78,11 @@ export async function manualRefundOrder(
   let upstreamCancelSucceeded = false;
   if (previousStatus === "pending") {
     try {
-      await cancelOrder(claimed.fivesim_order_id);
+      await cancelOrder(claimed.provider_order_id);
       upstreamCancelSucceeded = true;
     } catch (err) {
       console.error(
-        `Failed to cancel upstream 5sim order ${claimed.fivesim_order_id} on manual refund:`,
+        `Failed to cancel upstream 5sim order ${claimed.provider_order_id} on manual refund:`,
         err,
       );
     }

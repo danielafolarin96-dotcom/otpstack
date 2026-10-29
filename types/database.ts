@@ -84,6 +84,7 @@ export type Database = {
         Row: {
           fivesim_country_code: string
           flag_emoji: string
+          grizzly_country_id: number | null
           id: string
           is_active: boolean
           name: string
@@ -91,6 +92,7 @@ export type Database = {
         Insert: {
           fivesim_country_code: string
           flag_emoji: string
+          grizzly_country_id?: number | null
           id?: string
           is_active?: boolean
           name: string
@@ -98,6 +100,7 @@ export type Database = {
         Update: {
           fivesim_country_code?: string
           flag_emoji?: string
+          grizzly_country_id?: number | null
           id?: string
           is_active?: boolean
           name?: string
@@ -240,16 +243,22 @@ export type Database = {
           expires_at: string
           fivesim_operator: string | null
           fivesim_operator_rate: number | null
-          fivesim_order_id: string
+          fivesim_order_id: string | null
           id: string
           otp_code: string | null
           phone_number: string
           price_kobo: number
+          provider: string
+          provider_order_id: string
+          provider_supplier_id: string | null
           service_id: string
           status: Database["public"]["Enums"]["order_status"]
+          upstream_activation_time: string | null
           upstream_cancel_error: string | null
           upstream_cancel_succeeded: boolean | null
+          upstream_charged_usd: number | null
           upstream_cost_kobo: number
+          upstream_quoted_usd: number | null
           user_id: string
         }
         Insert: {
@@ -259,16 +268,22 @@ export type Database = {
           expires_at: string
           fivesim_operator?: string | null
           fivesim_operator_rate?: number | null
-          fivesim_order_id: string
+          fivesim_order_id?: string | null
           id?: string
           otp_code?: string | null
           phone_number: string
           price_kobo: number
+          provider?: string
+          provider_order_id: string
+          provider_supplier_id?: string | null
           service_id: string
           status?: Database["public"]["Enums"]["order_status"]
+          upstream_activation_time?: string | null
           upstream_cancel_error?: string | null
           upstream_cancel_succeeded?: boolean | null
+          upstream_charged_usd?: number | null
           upstream_cost_kobo: number
+          upstream_quoted_usd?: number | null
           user_id: string
         }
         Update: {
@@ -278,16 +293,22 @@ export type Database = {
           expires_at?: string
           fivesim_operator?: string | null
           fivesim_operator_rate?: number | null
-          fivesim_order_id?: string
+          fivesim_order_id?: string | null
           id?: string
           otp_code?: string | null
           phone_number?: string
           price_kobo?: number
+          provider?: string
+          provider_order_id?: string
+          provider_supplier_id?: string | null
           service_id?: string
           status?: Database["public"]["Enums"]["order_status"]
+          upstream_activation_time?: string | null
           upstream_cancel_error?: string | null
           upstream_cancel_succeeded?: boolean | null
+          upstream_charged_usd?: number | null
           upstream_cost_kobo?: number
+          upstream_quoted_usd?: number | null
           user_id?: string
         }
         Relationships: [
@@ -391,6 +412,51 @@ export type Database = {
           },
         ]
       }
+      provider_routes: {
+        Row: {
+          country_id: string | null
+          created_at: string
+          id: string
+          is_active: boolean
+          note: string | null
+          provider: string
+          service_id: string
+        }
+        Insert: {
+          country_id?: string | null
+          created_at?: string
+          id?: string
+          is_active?: boolean
+          note?: string | null
+          provider: string
+          service_id: string
+        }
+        Update: {
+          country_id?: string | null
+          created_at?: string
+          id?: string
+          is_active?: boolean
+          note?: string | null
+          provider?: string
+          service_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "provider_routes_country_id_fkey"
+            columns: ["country_id"]
+            isOneToOne: false
+            referencedRelation: "countries"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "provider_routes_service_id_fkey"
+            columns: ["service_id"]
+            isOneToOne: false
+            referencedRelation: "services"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       purchase_failures: {
         Row: {
           country_code: string | null
@@ -399,6 +465,7 @@ export type Database = {
           id: string
           message: string | null
           operator: string | null
+          provider: string | null
           reason: string
           service_id: string | null
           user_id: string
@@ -410,6 +477,7 @@ export type Database = {
           id?: string
           message?: string | null
           operator?: string | null
+          provider?: string | null
           reason: string
           service_id?: string | null
           user_id: string
@@ -421,6 +489,7 @@ export type Database = {
           id?: string
           message?: string | null
           operator?: string | null
+          provider?: string | null
           reason?: string
           service_id?: string | null
           user_id?: string
@@ -475,6 +544,7 @@ export type Database = {
         Row: {
           category: string
           fivesim_product_code: string
+          grizzly_service_code: string | null
           icon_key: string
           id: string
           is_active: boolean
@@ -484,6 +554,7 @@ export type Database = {
         Insert: {
           category: string
           fivesim_product_code: string
+          grizzly_service_code?: string | null
           icon_key?: string
           id?: string
           is_active?: boolean
@@ -493,6 +564,7 @@ export type Database = {
         Update: {
           category?: string
           fivesim_product_code?: string
+          grizzly_service_code?: string | null
           icon_key?: string
           id?: string
           is_active?: boolean
@@ -500,6 +572,59 @@ export type Database = {
           provider?: string
         }
         Relationships: []
+      }
+      upstream_cancel_queue: {
+        Row: {
+          attempts: number
+          created_at: string
+          give_up_at: string
+          id: string
+          last_error: string | null
+          not_before: string
+          order_id: string | null
+          outcome: string | null
+          provider: string
+          provider_order_id: string
+          reason: string
+          resolved_at: string | null
+        }
+        Insert: {
+          attempts?: number
+          created_at?: string
+          give_up_at: string
+          id?: string
+          last_error?: string | null
+          not_before: string
+          order_id?: string | null
+          outcome?: string | null
+          provider: string
+          provider_order_id: string
+          reason: string
+          resolved_at?: string | null
+        }
+        Update: {
+          attempts?: number
+          created_at?: string
+          give_up_at?: string
+          id?: string
+          last_error?: string | null
+          not_before?: string
+          order_id?: string | null
+          outcome?: string | null
+          provider?: string
+          provider_order_id?: string
+          reason?: string
+          resolved_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "upstream_cancel_queue_order_id_fkey"
+            columns: ["order_id"]
+            isOneToOne: false
+            referencedRelation: "orders"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       users: {
         Row: {
@@ -627,8 +752,12 @@ export type Database = {
           p_phone_number: string
           p_price_kobo: number
           p_provider?: string
+          p_provider_supplier_id?: string
           p_service_id: string
+          p_upstream_activation_time?: string
+          p_upstream_charged_usd?: number
           p_upstream_cost_kobo: number
+          p_upstream_quoted_usd?: number
           p_user_id: string
         }
         Returns: {
@@ -638,16 +767,22 @@ export type Database = {
           expires_at: string
           fivesim_operator: string | null
           fivesim_operator_rate: number | null
-          fivesim_order_id: string
+          fivesim_order_id: string | null
           id: string
           otp_code: string | null
           phone_number: string
           price_kobo: number
+          provider: string
+          provider_order_id: string
+          provider_supplier_id: string | null
           service_id: string
           status: Database["public"]["Enums"]["order_status"]
+          upstream_activation_time: string | null
           upstream_cancel_error: string | null
           upstream_cancel_succeeded: boolean | null
+          upstream_charged_usd: number | null
           upstream_cost_kobo: number
+          upstream_quoted_usd: number | null
           user_id: string
         }
         SetofOptions: {
@@ -659,7 +794,10 @@ export type Database = {
       }
     }
     Enums: {
-      finance_event_type: "revenue_recognized" | "refund_issued"
+      finance_event_type:
+        | "revenue_recognized"
+        | "refund_issued"
+        | "provider_cost_recovered"
       order_status:
         | "pending"
         | "sms_received"
@@ -803,7 +941,11 @@ export const Constants = {
   },
   public: {
     Enums: {
-      finance_event_type: ["revenue_recognized", "refund_issued"],
+      finance_event_type: [
+        "revenue_recognized",
+        "refund_issued",
+        "provider_cost_recovered",
+      ],
       order_status: [
         "pending",
         "sms_received",

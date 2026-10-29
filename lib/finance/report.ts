@@ -10,7 +10,7 @@
 
 export interface FinanceEventInput {
   orderId: string;
-  eventType: "revenue_recognized" | "refund_issued";
+  eventType: "revenue_recognized" | "refund_issued" | "provider_cost_recovered";
   serviceId: string;
   serviceName: string;
   countryCode: string;

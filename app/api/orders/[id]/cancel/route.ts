@@ -38,7 +38,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   // cancel an order that has SMS and bills us for it either way. The
   // expiry check above means any SMS found here arrived inside the window.
   // A failed check falls through to the ordinary cancel + refund below.
-  const upstreamSms = await fetchUpstreamSms(order.fivesim_order_id);
+  const upstreamSms = await fetchUpstreamSms(order.provider_order_id);
   if (upstreamSms && upstreamSms.length > 0) {
     const updates: { status: "sms_received"; completed_at: string; otp_code?: string } = {
       status: "sms_received",
@@ -104,13 +104,13 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   let upstreamCancelSucceeded = false;
   let upstreamCancelError: string | null = null;
   try {
-    await cancelOrder(order.fivesim_order_id);
+    await cancelOrder(order.provider_order_id);
     upstreamCancelSucceeded = true;
   } catch (err) {
     // Continue regardless — the user still gets refunded even if 5sim's
     // own cancel call fails; we're not going to keep charging them for a
     // number they no longer want.
-    console.error(`Failed to cancel upstream 5sim order ${order.fivesim_order_id}:`, err);
+    console.error(`Failed to cancel upstream 5sim order ${order.provider_order_id}:`, err);
     upstreamCancelError = describeUpstreamCancelError(err);
   }
 

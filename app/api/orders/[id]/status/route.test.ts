@@ -58,6 +58,7 @@ function baseOrder(overrides: Record<string, unknown> = {}) {
     user_id: USER.id,
     status: "pending",
     fivesim_order_id: "999",
+    provider_order_id: "999",
     phone_number: "+10000000000",
     otp_code: null,
     // Well within our own 10-minute TTL — these tests are specifically

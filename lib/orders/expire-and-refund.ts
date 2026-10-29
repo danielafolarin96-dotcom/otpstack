@@ -10,7 +10,7 @@ import { recordFinanceEvent } from "@/lib/finance/ledger";
 interface ExpirableOrder {
   id: string;
   user_id: string;
-  fivesim_order_id: string;
+  provider_order_id: string;
   price_kobo: number;
   upstream_cost_kobo: number;
   service_id: string;
@@ -54,7 +54,7 @@ export async function expireAndRefundOrder(
   // order that has SMS). One that landed after expires_at is late by our
   // own terms, so the customer is still refunded as before. A failed check,
   // or an SMS with no parseable timestamp, also refunds as before.
-  const upstreamSms = await fetchUpstreamSms(order.fivesim_order_id);
+  const upstreamSms = await fetchUpstreamSms(order.provider_order_id);
   if (upstreamSms && upstreamSms.length > 0) {
     const arrivedAt = firstSmsArrivedAt(upstreamSms);
     if (arrivedAt !== null && arrivedAt <= new Date(order.expires_at).getTime()) {
@@ -113,10 +113,10 @@ export async function expireAndRefundOrder(
   let upstreamCancelSucceeded = false;
   let upstreamCancelError: string | null = null;
   try {
-    await cancelOrder(order.fivesim_order_id);
+    await cancelOrder(order.provider_order_id);
     upstreamCancelSucceeded = true;
   } catch (err) {
-    console.error(`Failed to cancel upstream 5sim order ${order.fivesim_order_id} on expiry:`, err);
+    console.error(`Failed to cancel upstream 5sim order ${order.provider_order_id} on expiry:`, err);
     upstreamCancelError = describeUpstreamCancelError(err);
   }
 
