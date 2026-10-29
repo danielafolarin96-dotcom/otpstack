@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { expireAndRefundOrder } from "@/lib/orders/expire-and-refund";
+import { processDueUpstreamCancels, type ProcessQueueResult } from "@/lib/orders/upstream-cancel-queue";
 
 // Per ARCHITECTURE.md's order lifecycle step 5 (3-minute TTL — see
 // lib/orders/purchase.ts's ORDER_TTL_MINUTES). Auth here checks
@@ -46,6 +47,13 @@ export async function GET(request: Request) {
   // whole-sweep path, just scoped to one id.
   const { searchParams } = new URL(request.url);
   const orderId = searchParams.get("orderId");
+  // ?queue=1 — set by lib/qstash/client.ts's scheduleUpstreamCancelRetry:
+  // only work through upstream_cancel_queue (Grizzly cancels waiting out
+  // their ~5-minute lock), no expiry sweep.
+  const queueOnly = searchParams.get("queue") === "1";
+  if (queueOnly) {
+    return NextResponse.json({ cancelQueue: await runCancelQueue(admin) });
+  }
 
   let query = admin.from("orders").select("*").eq("status", "pending").lt("expires_at", new Date().toISOString());
   if (orderId) {
@@ -79,7 +87,21 @@ export async function GET(request: Request) {
     }
   }
 
-  return NextResponse.json(results);
+  // Every sweep (QStash per-order callback, GitHub Actions, daily cron)
+  // also works through any due queued cancels, so the queue never depends
+  // on its own QStash retry landing.
+  return NextResponse.json({ ...results, cancelQueue: await runCancelQueue(admin) });
+}
+
+// Never fails the sweep: an error here is logged and reported, and the
+// next run picks the rows up again.
+async function runCancelQueue(admin: ReturnType<typeof createAdminClient>): Promise<ProcessQueueResult | { error: string }> {
+  try {
+    return await processDueUpstreamCancels(admin);
+  } catch (err) {
+    console.error("Failed to process the upstream cancel queue:", err);
+    return { error: "Failed to process the upstream cancel queue" };
+  }
 }
 
 // QStash's `publishJSON` delivers via HTTP POST by default (confirmed

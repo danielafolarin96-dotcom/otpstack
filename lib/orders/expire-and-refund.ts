@@ -1,16 +1,22 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/types/database";
-import { cancelOrder } from "@/lib/5sim/client";
-import { extractOtpCode } from "@/lib/5sim/status";
-import { describeUpstreamCancelError, fetchUpstreamSms, firstSmsArrivedAt } from "@/lib/orders/upstream-sms";
+import { fetchUpstreamState, finishUpstream } from "@/lib/providers/upstream";
+import { asProviderName } from "@/lib/providers/policy";
+import { cancelUpstreamWithRecovery } from "@/lib/orders/upstream-cancel-queue";
 import { recordWalletTransaction } from "@/lib/wallet/ledger";
 import { recordFinanceEvent } from "@/lib/finance/ledger";
 
 interface ExpirableOrder {
   id: string;
   user_id: string;
+  // Missing on rows from before orders.provider existed = 5sim.
+  provider?: string | null;
   provider_order_id: string;
+  // Grizzly only: SMS punctuality is judged against these (see
+  // lib/grizzly/status.ts's smsArrivedAtOnOurClock).
+  created_at?: string;
+  upstream_activation_time?: string | null;
   price_kobo: number;
   upstream_cost_kobo: number;
   service_id: string;
@@ -22,7 +28,7 @@ export interface ExpireResult {
   // false means no refund was issued, callers must not assume
   // "expired_refunded" happened: either another path (a late-arriving SMS,
   // a manual cancel) already resolved this order between the caller's read
-  // and this call, or the pre-refund 5sim check below found the SMS had
+  // and this call, or the pre-refund upstream check below found the SMS had
   // arrived in time (smsReceived: true — the order is now sms_received).
   refunded: boolean;
   smsReceived?: boolean;
@@ -48,22 +54,21 @@ export async function expireAndRefundOrder(
   order: ExpirableOrder,
 ): Promise<ExpireResult> {
   // See lib/orders/upstream-sms.ts for the incident behind this pre-check.
-  // An SMS that reached 5sim at or before our own expires_at means the
-  // customer's code arrived inside the window they paid for — deliver it,
-  // no refund (5sim will bill us for it regardless; its cancel refuses an
-  // order that has SMS). One that landed after expires_at is late by our
-  // own terms, so the customer is still refunded as before. A failed check,
-  // or an SMS with no parseable timestamp, also refunds as before.
-  const upstreamSms = await fetchUpstreamSms(order.provider_order_id);
-  if (upstreamSms && upstreamSms.length > 0) {
-    const arrivedAt = firstSmsArrivedAt(upstreamSms);
+  // An SMS that reached the provider at or before our own expires_at means
+  // the customer's code arrived inside the window they paid for — deliver
+  // it, no refund (the provider bills us for it regardless; neither will
+  // cancel an order that has SMS). One that landed after expires_at is late
+  // by our own terms, so the customer is still refunded as before. A failed
+  // check, or an SMS with no trustworthy timestamp, also refunds as before.
+  const upstream = await fetchUpstreamState(order);
+  if (upstream?.hasSms) {
+    const arrivedAt = upstream.smsArrivedAt;
     if (arrivedAt !== null && arrivedAt <= new Date(order.expires_at).getTime()) {
       const updates: { status: "sms_received"; completed_at: string; otp_code?: string } = {
         status: "sms_received",
         completed_at: new Date().toISOString(),
       };
-      const otpCode = extractOtpCode(upstreamSms);
-      if (otpCode) updates.otp_code = otpCode;
+      if (upstream.otpCode) updates.otp_code = upstream.otpCode;
 
       // Same first-claim-wins guard as the expiry claim below.
       const { data: delivered, error: deliverError } = await admin
@@ -79,7 +84,8 @@ export async function expireAndRefundOrder(
         console.log(`Order ${order.id} was already resolved by another path before its on-time SMS was recorded.`);
         return { refunded: false };
       }
-      console.log(`Order ${order.id} had an on-time SMS at 5sim — recorded as sms_received, no refund.`);
+      console.log(`Order ${order.id} had an on-time SMS upstream — recorded as sms_received, no refund.`);
+      await finishUpstream(order);
       return { refunded: false, smsReceived: true };
     }
   }
@@ -101,27 +107,19 @@ export async function expireAndRefundOrder(
     return { refunded: false };
   }
 
-  // 5sim's own docs (https://5sim.net/docs, "Buy activation number" ->
-  // Request limits: "Maximum waiting time is 15 minutes. Timeout no sms 5
-  // minute") put an activation order's no-SMS auto-timeout at ~5 minutes —
-  // shorter than our own 10-minute TTL, and confirmed empirically (Sept
-  // 2026): every cancel we observed succeeding upstream landed within ~4
-  // minutes of purchase; the one we have on record attempted at ~15
-  // minutes had already flipped to TIMEOUT upstream and failed. So a
-  // failure here is genuinely expected often, even with a fast sweep — see
-  // the money-flow note in this change's commit message.
-  let upstreamCancelSucceeded = false;
-  let upstreamCancelError: string | null = null;
-  try {
-    await cancelOrder(order.provider_order_id);
-    upstreamCancelSucceeded = true;
-  } catch (err) {
-    console.error(`Failed to cancel upstream 5sim order ${order.provider_order_id} on expiry:`, err);
-    upstreamCancelError = describeUpstreamCancelError(err);
-  }
+  // Cancel upstream so the number can't bill us later. If the cancel fails
+  // but the provider shows the order already closed with no SMS, the cost
+  // is still recovered (5sim's TIMEOUT included — confirmed against 5sim's
+  // payment history, 29 Oct 2026). A Grizzly cancel still inside its
+  // ~5-minute lock is queued for retry; if that retry later succeeds,
+  // lib/orders/upstream-cancel-queue.ts records the recovery.
+  const { succeeded: upstreamCancelSucceeded, error: upstreamCancelError } = await cancelUpstreamWithRecovery(
+    admin,
+    order,
+  );
 
   // Best-effort: feeds the admin Margin page's recovered-vs-lost split
-  // (lib/pricing/margin-report.ts), plus 5sim's own reason when the cancel
+  // (lib/pricing/margin-report.ts), plus the provider's own reason when the cancel
   // failed. Not money-critical — if this write fails, the refund below
   // still happens; the order just won't be attributed to either bucket on
   // the Margin page.
@@ -164,7 +162,7 @@ export async function expireAndRefundOrder(
       eventType: "refund_issued",
       serviceId: order.service_id,
       countryCode: order.country_code,
-      provider: recognized?.provider ?? "5sim",
+      provider: recognized?.provider ?? asProviderName(order.provider),
       revenueKobo: -order.price_kobo,
       providerCostKobo: upstreamCancelSucceeded ? -order.upstream_cost_kobo : 0,
       paymentFeeKobo: recognized ? -recognized.payment_fee_kobo : 0,

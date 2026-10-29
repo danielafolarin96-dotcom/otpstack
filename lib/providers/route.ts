@@ -42,7 +42,7 @@ export function pickProvider(
   const route = active.find((r) => r.country_id === country.id) ?? active.find((r) => r.country_id === null);
   const provider = asProviderName(route?.provider ?? service.provider);
 
-  if (provider === "grizzly" && (!service.grizzly_service_code || country.grizzly_country_id === null)) {
+  if (provider === "grizzly" && (!service.grizzly_service_code || (country.grizzly_country_id ?? null) === null)) {
     return "5sim";
   }
   return provider;

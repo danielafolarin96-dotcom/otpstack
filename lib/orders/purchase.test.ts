@@ -3,7 +3,25 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/types/database";
 import { buyActivation, cancelOrder, FiveSimError, getOperatorPrices } from "@/lib/5sim/client";
 import { scheduleOrderExpiry } from "@/lib/qstash/client";
+import {
+  buyActivation as buyGrizzlyActivation,
+  getSupplierPrices,
+  GrizzlyError,
+  type GrizzlyActivation,
+} from "@/lib/grizzly/client";
+import { enqueueUpstreamCancel } from "./upstream-cancel-queue";
 import { PurchaseError, purchaseNumber } from "./purchase";
+
+vi.mock("@/lib/grizzly/client", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/grizzly/client")>("@/lib/grizzly/client");
+  // Ranking, GrizzlyError and the message map stay real.
+  return { ...actual, buyActivation: vi.fn(), getSupplierPrices: vi.fn() };
+});
+
+vi.mock("./upstream-cancel-queue", async () => {
+  const actual = await vi.importActual<typeof import("./upstream-cancel-queue")>("./upstream-cancel-queue");
+  return { ...actual, enqueueUpstreamCancel: vi.fn().mockResolvedValue(true) };
+});
 
 vi.mock("@/lib/5sim/client", async () => {
   const actual = await vi.importActual<typeof import("@/lib/5sim/client")>("@/lib/5sim/client");
@@ -93,7 +111,7 @@ function fakeAdminClient(
       if (rows) rows = rows.filter(pred);
       return builder;
     };
-    const current = () => (rows ? { ...config, count: rows.length } : config);
+    const current = () => (rows ? { ...config, data: config.data ?? rows, count: rows.length } : config);
     const builder: {
       select: () => typeof builder;
       eq: (col: string, value: unknown) => typeof builder;
@@ -573,5 +591,186 @@ describe("PurchaseError", () => {
     expect(err.status).toBe(418);
     expect(err.reason).toBe("other");
     expect(err.shortfallKobo).toBeUndefined();
+  });
+});
+
+describe("purchaseNumber via Grizzly", () => {
+  const GRIZZLY_SERVICE = { ...SERVICE, grizzly_service_code: "wa" };
+  const GRIZZLY_COUNTRY = { ...COUNTRY, grizzly_country_id: 19 };
+  // Supplier 438 lists two price steps; we quote (and cap at) the highest.
+  const SUPPLIERS = [
+    { supplierId: "438", count: 30, prices: [0.3, 0.52], cost: 0.52 },
+    { supplierId: "11", count: 5, prices: [0.4], cost: 0.4 },
+  ];
+  const ACTIVATION: GrizzlyActivation = {
+    activationId: "38496653",
+    phoneNumber: "+2348000000001",
+    activationCost: 0.52,
+    currency: 840,
+    activationTime: "2026-10-29 12:00:00",
+  };
+
+  const grizzlyConfigs = (overrides: Record<string, TableConfig> = {}): Record<string, TableConfig> => ({
+    ...baseConfigs(),
+    services: { data: GRIZZLY_SERVICE, error: null },
+    countries: { data: GRIZZLY_COUNTRY, error: null },
+    provider_routes: {
+      data: null,
+      error: null,
+      rows: [{ service_id: SERVICE.id, country_id: null, provider: "grizzly", is_active: true }],
+    },
+    fx_rates: { data: { rate: 1353 }, error: null },
+    provider_funding_rates: { data: [{ provider: "grizzly", ngn_per_usd: 1562 }], error: null },
+    ...overrides,
+  });
+
+  const params = (operator = "438") => purchaseParams({ operator });
+
+  beforeEach(() => {
+    vi.mocked(getSupplierPrices).mockResolvedValue(SUPPLIERS);
+    vi.mocked(buyGrizzlyActivation).mockResolvedValue(ACTIVATION);
+  });
+
+  it("buys from the chosen supplier capped at its highest price step, and records the Grizzly fields", async () => {
+    const client = fakeAdminClient(grizzlyConfigs(), baseRpcResult());
+
+    await purchaseNumber(client, params());
+
+    expect(getSupplierPrices).toHaveBeenCalledWith("wa", 19);
+    expect(buyGrizzlyActivation).toHaveBeenCalledWith({ service: "wa", countryId: 19, supplierId: "438", maxPrice: 0.52 });
+    expect(buyActivation).not.toHaveBeenCalled();
+    // 0.52 USD at the grizzly funding rate 1562 = 81,224 kobo cost; 100% markup.
+    expect(client.rpc).toHaveBeenCalledWith(
+      "create_order_and_debit_wallet",
+      expect.objectContaining({
+        p_provider: "grizzly",
+        p_fivesim_order_id: "38496653",
+        p_phone_number: "+2348000000001",
+        p_price_kobo: 162_448,
+        p_upstream_cost_kobo: 81_224,
+        p_provider_supplier_id: "438",
+        p_upstream_quoted_usd: 0.52,
+        p_upstream_charged_usd: 0.52,
+        p_upstream_activation_time: "2026-10-29 12:00:00",
+      }),
+    );
+    const args = vi.mocked(client.rpc).mock.calls[0][1] as Record<string, unknown>;
+    expect(args).not.toHaveProperty("p_fivesim_operator");
+  });
+
+  it("keeps the quoted price but records the lower amount Grizzly actually charged", async () => {
+    vi.mocked(buyGrizzlyActivation).mockResolvedValue({ ...ACTIVATION, activationCost: 0.3 });
+    const client = fakeAdminClient(grizzlyConfigs(), baseRpcResult());
+
+    await purchaseNumber(client, params());
+
+    // price from the 0.52 quote; cost from the 0.30 charge (0.30 * 1562 = 46,860 kobo).
+    expect(client.rpc).toHaveBeenCalledWith(
+      "create_order_and_debit_wallet",
+      expect.objectContaining({ p_price_kobo: 162_448, p_upstream_cost_kobo: 46_860, p_upstream_charged_usd: 0.3 }),
+    );
+  });
+
+  it("never debits and queues a cancel when Grizzly charged more than we quoted", async () => {
+    vi.mocked(buyGrizzlyActivation).mockResolvedValue({ ...ACTIVATION, activationCost: 0.6 });
+    const client = fakeAdminClient(grizzlyConfigs(), baseRpcResult());
+    const before = Date.now();
+
+    await expect(purchaseNumber(client, params())).rejects.toMatchObject({
+      status: 502,
+      message: "Something went wrong purchasing this number — please try again.",
+      reason: "other",
+      provider: "grizzly",
+    });
+    expect(client.rpc).not.toHaveBeenCalled();
+    const queued = vi.mocked(enqueueUpstreamCancel).mock.calls[0][1];
+    expect(queued).toMatchObject({ provider: "grizzly", providerOrderId: "38496653", reason: "price_above_quote" });
+    // Not before Grizzly's ~5-minute cancel lock has passed.
+    expect(queued.notBefore.getTime()).toBeGreaterThanOrEqual(before + 330_000);
+  });
+
+  it("never debits when Grizzly reports a non-USD currency", async () => {
+    vi.mocked(buyGrizzlyActivation).mockResolvedValue({ ...ACTIVATION, currency: 643 });
+    const client = fakeAdminClient(grizzlyConfigs(), baseRpcResult());
+
+    await expect(purchaseNumber(client, params())).rejects.toMatchObject({ status: 502 });
+    expect(client.rpc).not.toHaveBeenCalled();
+    expect(enqueueUpstreamCancel).toHaveBeenCalled();
+  });
+
+  it.each([
+    ["NO_NUMBERS", "upstream_no_numbers", "No numbers currently available for this service/country — try again shortly or pick a different country."],
+    ["NO_BALANCE", "provider_balance", "Something went wrong purchasing this number — please try again."],
+    ["BAD_SERVICE", "other", "Something went wrong purchasing this number — please try again."],
+  ])("maps Grizzly %s to reason %s without showing the raw text", async (body, reason, message) => {
+    vi.mocked(buyGrizzlyActivation).mockRejectedValue(new GrizzlyError("getNumberV2", 200, body));
+    const client = fakeAdminClient(grizzlyConfigs(), baseRpcResult());
+
+    await expect(purchaseNumber(client, params())).rejects.toMatchObject({
+      status: 502,
+      reason,
+      message,
+      provider: "grizzly",
+      internalMessage: "grizzly getNumberV2 failed: 200 " + body,
+    });
+    expect(client.rpc).not.toHaveBeenCalled();
+    expect(enqueueUpstreamCancel).not.toHaveBeenCalled();
+  });
+
+  it("rejects with 409 when the chosen supplier is no longer in stock", async () => {
+    vi.mocked(getSupplierPrices).mockResolvedValue([{ ...SUPPLIERS[0], count: 0 }, SUPPLIERS[1]]);
+    const client = fakeAdminClient(grizzlyConfigs(), baseRpcResult());
+
+    await expect(purchaseNumber(client, params("438"))).rejects.toMatchObject({
+      status: 409,
+      reason: "operator_unavailable",
+      provider: "grizzly",
+    });
+    expect(buyGrizzlyActivation).not.toHaveBeenCalled();
+  });
+
+  it("queues the cancel (instead of cancelling now) when recording the order fails", async () => {
+    const client = fakeAdminClient(grizzlyConfigs(), { data: null, error: { message: "connection reset" } });
+
+    await expect(purchaseNumber(client, params())).rejects.toMatchObject({ status: 500 });
+    expect(cancelOrder).not.toHaveBeenCalled();
+    expect(vi.mocked(enqueueUpstreamCancel).mock.calls[0][1]).toMatchObject({
+      providerOrderId: "38496653",
+      reason: "order_record_failed",
+    });
+  });
+
+  it("stays on 5sim in a country with no Grizzly mapping", async () => {
+    const client = fakeAdminClient(
+      grizzlyConfigs({ countries: { data: { ...COUNTRY, grizzly_country_id: null }, error: null } }),
+      baseRpcResult(),
+    );
+
+    await purchaseNumber(client, purchaseParams());
+
+    expect(getSupplierPrices).not.toHaveBeenCalled();
+    expect(buyActivation).toHaveBeenCalledWith("nigeria", "virtual2", "whatsapp");
+    expect(client.rpc).toHaveBeenCalledWith("create_order_and_debit_wallet", expect.objectContaining({ p_provider: "5sim" }));
+  });
+
+  it("honours a per-country override back to 5sim", async () => {
+    const client = fakeAdminClient(
+      grizzlyConfigs({
+        provider_routes: {
+          data: null,
+          error: null,
+          rows: [
+            { service_id: SERVICE.id, country_id: null, provider: "grizzly", is_active: true },
+            { service_id: SERVICE.id, country_id: COUNTRY.id, provider: "5sim", is_active: true },
+          ],
+        },
+      }),
+      baseRpcResult(),
+    );
+
+    await purchaseNumber(client, purchaseParams());
+
+    expect(buyGrizzlyActivation).not.toHaveBeenCalled();
+    expect(buyActivation).toHaveBeenCalled();
   });
 });

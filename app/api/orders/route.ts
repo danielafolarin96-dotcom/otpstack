@@ -29,7 +29,7 @@ async function failureResponse(
   context: FailureContext | null,
   status: number,
   error: string,
-  log: { reason: PurchaseFailureReason; message?: string },
+  log: { reason: PurchaseFailureReason; message?: string; provider?: string },
   extra: Record<string, unknown> = {},
 ) {
   if (context) {
@@ -39,6 +39,7 @@ async function failureResponse(
       countryId: context.countryId,
       operator: context.operator,
       reason: log.reason,
+      provider: log.provider,
       httpStatus: status,
       message: log.message ?? error,
     });
@@ -110,7 +111,7 @@ export async function POST(request: Request) {
         context,
         err.status,
         err.message,
-        { reason: err.reason, message: err.internalMessage },
+        { reason: err.reason, message: err.internalMessage, provider: err.provider },
         err.shortfallKobo !== undefined ? { shortfallKobo: err.shortfallKobo } : {},
       );
     }

@@ -1,11 +1,11 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { cancelOrder } from "@/lib/5sim/client";
 import { recordWalletTransaction } from "@/lib/wallet/ledger";
 import { recordFinanceEvent } from "@/lib/finance/ledger";
-import { extractOtpCode } from "@/lib/5sim/status";
-import { describeUpstreamCancelError, fetchUpstreamSms } from "@/lib/orders/upstream-sms";
+import { fetchUpstreamState, finishUpstream } from "@/lib/providers/upstream";
+import { asProviderName, customerCanCancel } from "@/lib/providers/policy";
+import { cancelUpstreamWithRecovery } from "@/lib/orders/upstream-cancel-queue";
 
 // Manual cancel-for-refund, per ARCHITECTURE.md's order lifecycle step 6 —
 // only while the order is still pending and not yet expired.
@@ -31,21 +31,30 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   if (new Date(order.expires_at).getTime() <= Date.now()) {
     return NextResponse.json({ error: "This order has already expired" }, { status: 409 });
   }
+  // Grizzly locks cancel for ~5 minutes — the whole hold — so these orders
+  // are never customer-cancellable (the dashboard hides the button too);
+  // they refund automatically at expiry if no code arrived.
+  if (!customerCanCancel(order.provider)) {
+    return NextResponse.json(
+      { error: "This number can't be cancelled early — it refunds automatically if no code arrives." },
+      { status: 409 },
+    );
+  }
 
   // See lib/orders/upstream-sms.ts for the incident behind this pre-check:
-  // if the code already reached 5sim (our own poll just hadn't picked it
-  // up), the customer gets the code instead of a refund — 5sim refuses to
-  // cancel an order that has SMS and bills us for it either way. The
-  // expiry check above means any SMS found here arrived inside the window.
-  // A failed check falls through to the ordinary cancel + refund below.
-  const upstreamSms = await fetchUpstreamSms(order.provider_order_id);
-  if (upstreamSms && upstreamSms.length > 0) {
+  // if the code already reached the provider (our own poll just hadn't
+  // picked it up), the customer gets the code instead of a refund — the
+  // provider refuses to cancel an order that has SMS and bills us for it
+  // either way. The expiry check above means any SMS found here arrived
+  // inside the window. A failed check falls through to the ordinary cancel
+  // + refund below.
+  const upstream = await fetchUpstreamState(order);
+  if (upstream?.hasSms) {
     const updates: { status: "sms_received"; completed_at: string; otp_code?: string } = {
       status: "sms_received",
       completed_at: new Date().toISOString(),
     };
-    const otpCode = extractOtpCode(upstreamSms);
-    if (otpCode) updates.otp_code = otpCode;
+    if (upstream.otpCode) updates.otp_code = upstream.otpCode;
 
     // Same first-claim-wins guard as the cancel claim below.
     const { data: delivered, error: deliverError } = await admin
@@ -65,7 +74,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       return NextResponse.json({ error: "This order was already resolved" }, { status: 409 });
     }
 
-    console.log(`Order ${order.id} had an SMS at 5sim when cancel was requested — delivered, no refund.`);
+    console.log(`Order ${order.id} had an SMS upstream when cancel was requested — delivered, no refund.`);
+    await finishUpstream(order);
     return NextResponse.json({
       ok: true,
       order: {
@@ -101,18 +111,14 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     return NextResponse.json({ error: "This order was already resolved" }, { status: 409 });
   }
 
-  let upstreamCancelSucceeded = false;
-  let upstreamCancelError: string | null = null;
-  try {
-    await cancelOrder(order.provider_order_id);
-    upstreamCancelSucceeded = true;
-  } catch (err) {
-    // Continue regardless — the user still gets refunded even if 5sim's
-    // own cancel call fails; we're not going to keep charging them for a
-    // number they no longer want.
-    console.error(`Failed to cancel upstream 5sim order ${order.provider_order_id}:`, err);
-    upstreamCancelError = describeUpstreamCancelError(err);
-  }
+  // Continue to the refund regardless of the outcome — we're not going to
+  // keep charging the customer for a number they no longer want. See
+  // cancelUpstreamWithRecovery for how a failed cancel can still count as
+  // recovered (the order already closed upstream with no SMS).
+  const { succeeded: upstreamCancelSucceeded, error: upstreamCancelError } = await cancelUpstreamWithRecovery(
+    admin,
+    order,
+  );
 
   // Best-effort — feeds the admin Margin page's recovered-vs-lost split
   // (lib/pricing/margin-report.ts), same as lib/orders/expire-and-refund.ts.
@@ -159,7 +165,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
       eventType: "refund_issued",
       serviceId: order.service_id,
       countryCode: order.country_code,
-      provider: recognized?.provider ?? "5sim",
+      provider: recognized?.provider ?? asProviderName(order.provider),
       revenueKobo: -order.price_kobo,
       providerCostKobo: upstreamCancelSucceeded ? -order.upstream_cost_kobo : 0,
       paymentFeeKobo: recognized ? -recognized.payment_fee_kobo : 0,

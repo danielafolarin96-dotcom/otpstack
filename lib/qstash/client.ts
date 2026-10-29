@@ -48,3 +48,28 @@ export async function scheduleOrderExpiry(orderId: string, delaySeconds: number)
     console.error(`Failed to schedule QStash expiry callback for order ${orderId}:`, err);
   }
 }
+
+// One-shot call that makes /api/cron/expire-orders work through due rows of
+// upstream_cancel_queue (Grizzly cancels that hit the ~5-minute lock — see
+// lib/orders/upstream-cancel-queue.ts). `?queue=1` skips the expiry sweep
+// so this never re-processes orders. Same best-effort contract as
+// scheduleOrderExpiry: never throws, and the recurring backstop sweeps
+// process the queue anyway if this doesn't land.
+export async function scheduleUpstreamCancelRetry(delaySeconds: number): Promise<void> {
+  const appUrl = process.env.APP_URL;
+  if (!appUrl) {
+    console.error("scheduleUpstreamCancelRetry: APP_URL is not set — the cancel queue waits for the backstop sweeps.");
+    return;
+  }
+
+  try {
+    await qstashClient().publishJSON({
+      url: `${appUrl}/api/cron/expire-orders?queue=1`,
+      headers: { Authorization: `Bearer ${process.env.CRON_SECRET}` },
+      delay: Math.max(0, Math.ceil(delaySeconds)),
+      body: {},
+    });
+  } catch (err) {
+    console.error("Failed to schedule QStash upstream-cancel retry:", err);
+  }
+}

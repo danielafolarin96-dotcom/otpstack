@@ -8,7 +8,21 @@ import {
   getOperatorPrices,
   judgedRate,
 } from "@/lib/5sim/client";
+import {
+  buyActivation as buyGrizzlyActivation,
+  customerFacingGrizzlyPurchaseMessage,
+  getSupplierPrices,
+  GRIZZLY_USD_CURRENCY,
+  GrizzlyError,
+  rankSuppliers,
+} from "@/lib/grizzly/client";
 import type { PurchaseFailureReason } from "./purchase-failures";
+import {
+  CANCEL_GIVE_UP_AFTER_MS,
+  enqueueUpstreamCancel,
+  GRIZZLY_CANCEL_LOCK_SECONDS,
+  type UpstreamCancelReason,
+} from "./upstream-cancel-queue";
 import {
   effectiveFxRate,
   fetchAllPricingRules,
@@ -17,6 +31,7 @@ import {
 } from "@/lib/pricing/engine";
 import { computeFeeKobo, fetchActiveFeeSchedule } from "@/lib/finance/fee-schedule";
 import { scheduleOrderExpiry } from "@/lib/qstash/client";
+import { resolveProvider, type ProviderName } from "@/lib/providers/route";
 
 // Shortened from 10 (Sept 2026) — deliberate product decision, not a
 // default: 5sim's own no-SMS auto-timeout is ~5 minutes (ARCHITECTURE.md's
@@ -44,7 +59,12 @@ const QSTASH_CALLBACK_PADDING_SECONDS = 10;
 // app/api/orders/route.ts, this bounds how many numbers one user can be
 // holding at once regardless of how spread out in time the purchases were.
 const MAX_CONCURRENT_ORDERS_PER_USER = 3;
-const UPSTREAM_CURRENCY_PAIR = "USD_NGN"; // 5sim prices observed in USD — see lib/5sim/client.ts
+// Both providers price in USD (5sim observed; Grizzly's getNumberV2 reports
+// currency 840 = USD, checked on every purchase below).
+const UPSTREAM_CURRENCY_PAIR = "USD_NGN";
+// Float slack when comparing Grizzly's charge with our quote — both are
+// Grizzly's own decimal strings, so anything beyond this is a real excess.
+const PRICE_EPSILON_USD = 1e-9;
 
 export interface PurchaseErrorOptions {
   // Short code recorded in purchase_failures (lib/orders/purchase-failures.ts).
@@ -53,15 +73,20 @@ export interface PurchaseErrorOptions {
   // so it can offer a pre-filled top-up. Absent when unknown (the RPC's
   // balance-race path, where the balance moved under us).
   shortfallKobo?: number;
-  // Server-side detail for purchase_failures.message (e.g. 5sim's raw
-  // response) — never sent to the client; `message` is what the customer sees.
+  // Server-side detail for purchase_failures.message (e.g. the provider's
+  // raw response) — never sent to the client; `message` is what the
+  // customer sees.
   internalMessage?: string;
+  // Which provider the attempt was routed to, once known — recorded in
+  // purchase_failures.provider.
+  provider?: ProviderName;
 }
 
 export class PurchaseError extends Error {
   public reason: PurchaseFailureReason;
   public shortfallKobo?: number;
   public internalMessage?: string;
+  public provider?: ProviderName;
 
   constructor(
     message: string,
@@ -72,6 +97,7 @@ export class PurchaseError extends Error {
     this.reason = options.reason ?? "other";
     this.shortfallKobo = options.shortfallKobo;
     this.internalMessage = options.internalMessage;
+    this.provider = options.provider;
   }
 }
 
@@ -89,24 +115,191 @@ function errorMessage(err: unknown): string {
   return typeof withMessage?.message === "string" ? withMessage.message : String(err);
 }
 
-async function safeCancelUpstream(fivesimOrderId: number) {
+async function safeCancelUpstream(fivesimOrderId: string) {
   try {
-    await cancelOrder(String(fivesimOrderId));
+    await cancelOrder(fivesimOrderId);
   } catch (err) {
     console.error(`Failed to cancel upstream 5sim order ${fivesimOrderId} after a local failure:`, err);
   }
 }
 
+// Undo an upstream purchase we're not going to sell. 5sim cancels
+// immediately; Grizzly refuses cancels for ~5 minutes, so the cancel is
+// queued for after the lock (lib/orders/upstream-cancel-queue.ts). Grizzly
+// only charges when an SMS arrives, and nobody holds this number, so the
+// queued cancel is tidying up rather than recovering money.
+async function abandonUpstreamPurchase(
+  admin: SupabaseClient<Database>,
+  provider: ProviderName,
+  providerOrderId: string,
+  reason: UpstreamCancelReason,
+  lastError: string,
+) {
+  if (provider === "5sim") {
+    await safeCancelUpstream(providerOrderId);
+    return;
+  }
+  const now = Date.now();
+  await enqueueUpstreamCancel(admin, {
+    provider,
+    providerOrderId,
+    reason,
+    notBefore: new Date(now + GRIZZLY_CANCEL_LOCK_SECONDS * 1000),
+    giveUpAt: new Date(now + CANCEL_GIVE_UP_AFTER_MS),
+    lastError: lastError.slice(0, 500),
+  });
+}
+
+// The customer's chosen option, re-validated against a fresh provider
+// fetch, and what we pay for it (USD).
+type Quote =
+  | { provider: "5sim"; operator: string; costUsd: number; judgedRate: number | undefined }
+  | { provider: "grizzly"; supplierId: string; costUsd: number; serviceCode: string; countryId: number };
+
+// What the provider actually sold us.
+interface UpstreamPurchase {
+  providerOrderId: string;
+  phone: string;
+  chargedUsd: number;
+  activationTime: string | null;
+}
+
+type ServiceRow = Database["public"]["Tables"]["services"]["Row"];
+type CountryRow = Database["public"]["Tables"]["countries"]["Row"];
+
+function operatorUnavailable(service: ServiceRow, country: CountryRow, provider: ProviderName): PurchaseError {
+  return new PurchaseError(
+    `That operator is no longer available for ${service.name} in ${country.name} — please choose another.`,
+    409,
+    { reason: "operator_unavailable", provider },
+  );
+}
+
+// Re-validates the customer's chosen operator against a fresh fetch rather
+// than trusting whatever was displayed when they opened the picker — stock
+// and price can shift in the moments between fetching options and
+// confirming a purchase. A chosen operator that's dropped out of the
+// options is rejected rather than silently substituted for a different
+// one; the client's job on a 409 is to re-fetch the options and let the
+// customer choose again, not to retry blindly.
+async function quoteChosenOption(
+  provider: ProviderName,
+  service: ServiceRow,
+  country: CountryRow,
+  operator: string,
+): Promise<Quote> {
+  if (provider === "grizzly") {
+    // pickProvider only returns grizzly when both mappings exist.
+    const serviceCode = service.grizzly_service_code!;
+    const countryId = country.grizzly_country_id!;
+    const suppliers = await getSupplierPrices(serviceCode, countryId);
+    const chosen = rankSuppliers(suppliers ?? []).options.find((s) => s.supplierId === operator);
+    if (!chosen) throw operatorUnavailable(service, country, provider);
+    return { provider, supplierId: chosen.supplierId, costUsd: chosen.cost, serviceCode, countryId };
+  }
+
+  // 5sim: a chosen operator that's out of stock or whose rate fell below
+  // MIN_ACCEPTABLE_RATE (lib/5sim/client.ts's rankOperators) is gone.
+  const { options } = await getOperatorPrices(country.fivesim_country_code, service.fivesim_product_code);
+  const chosen = options.find((option) => option.operator === operator);
+  if (!chosen) throw operatorUnavailable(service, country, provider);
+  return { provider, operator: chosen.operator, costUsd: chosen.cost, judgedRate: judgedRate(chosen) };
+}
+
+// Point of no return — this spends real money upstream. Full provider
+// error detail is logged and kept in internalMessage; the customer only
+// ever sees the mapped message, since some provider errors (5sim's "not
+// enough user balance", Grizzly's NO_BALANCE) describe OUR provider
+// account, not the customer's wallet, and would be actively misleading.
+async function buyFromProvider(
+  admin: SupabaseClient<Database>,
+  quote: Quote,
+  service: ServiceRow,
+  country: CountryRow,
+): Promise<UpstreamPurchase> {
+  if (quote.provider === "grizzly") {
+    let activation;
+    try {
+      activation = await buyGrizzlyActivation({
+        service: quote.serviceCode,
+        countryId: quote.countryId,
+        supplierId: quote.supplierId,
+        maxPrice: quote.costUsd,
+      });
+    } catch (err) {
+      console.error(`Grizzly getNumberV2 failed for ${quote.serviceCode}/${quote.countryId}/${quote.supplierId}:`, err);
+      const body = err instanceof GrizzlyError ? err.body.trim() : "";
+      throw new PurchaseError(customerFacingGrizzlyPurchaseMessage(body), 502, {
+        reason: body === "NO_NUMBERS" ? "upstream_no_numbers" : body === "NO_BALANCE" ? "provider_balance" : "other",
+        internalMessage: errorMessage(err),
+        provider: "grizzly",
+      });
+    }
+
+    // maxPrice should make this impossible, but the quote is a promise to
+    // the customer: if Grizzly charged more than we quoted (or in a
+    // currency our cost conversion doesn't cover), don't sell the number.
+    // No debit happens; the activation is queued for cancel after the lock.
+    const overQuote = activation.activationCost > quote.costUsd + PRICE_EPSILON_USD;
+    const wrongCurrency = activation.currency !== null && activation.currency !== GRIZZLY_USD_CURRENCY;
+    if (overQuote || wrongCurrency) {
+      const detail = `Grizzly charged ${activation.activationCost} (currency ${activation.currency}) against a quote of ${quote.costUsd} USD for activation ${activation.activationId}`;
+      console.error(detail);
+      await abandonUpstreamPurchase(admin, "grizzly", activation.activationId, "price_above_quote", detail);
+      throw new PurchaseError("Something went wrong purchasing this number — please try again.", 502, {
+        reason: "other",
+        internalMessage: detail,
+        provider: "grizzly",
+      });
+    }
+
+    return {
+      providerOrderId: activation.activationId,
+      phone: activation.phoneNumber,
+      chargedUsd: activation.activationCost,
+      activationTime: activation.activationTime,
+    };
+  }
+
+  try {
+    const fivesimOrder = await buyActivation(country.fivesim_country_code, quote.operator, service.fivesim_product_code);
+    return {
+      providerOrderId: String(fivesimOrder.id),
+      phone: fivesimOrder.phone,
+      // 5sim's actual charged price can differ from the quote (observed
+      // live during testing).
+      chargedUsd: fivesimOrder.price,
+      activationTime: null,
+    };
+  } catch (err) {
+    console.error(`5sim buyActivation failed for ${service.fivesim_product_code}/${country.fivesim_country_code}:`, err);
+    const rawMessage = errorMessage(err);
+    const lowerMessage = rawMessage.toLowerCase();
+    throw new PurchaseError(customerFacingPurchaseErrorMessage(rawMessage), 502, {
+      reason: lowerMessage.includes("no free phones")
+        ? "upstream_no_numbers"
+        : // Our 5sim account is out of funds, not the customer's wallet.
+          lowerMessage.includes("not enough user balance")
+          ? "provider_balance"
+          : "other",
+      internalMessage: rawMessage,
+      provider: "5sim",
+    });
+  }
+}
+
 // Order lifecycle step 1-2 (ARCHITECTURE.md): balance check -> buy -> debit
 // -> order created. There's no separate "quote" step to re-validate
-// against — we never trust a client-supplied price, so fetching 5sim's
-// current price and running it through the pricing engine right here *is*
-// the re-validation ARCHITECTURE.md's pricing engine step 6 calls for.
+// against — we never trust a client-supplied price, so fetching the
+// provider's current price and running it through the pricing engine right
+// here *is* the re-validation ARCHITECTURE.md's pricing engine step 6
+// calls for. Which provider sells the number comes from provider_routes
+// (lib/providers/route.ts).
 export async function purchaseNumber(
   admin: SupabaseClient<Database>,
   params: { userId: string; serviceId: string; countryId: string; operator: string },
 ): Promise<PurchaseResult> {
-  // Freeze check first, before any 5sim call or DB write — a frozen
+  // Freeze check first, before any provider call or DB write — a frozen
   // account shouldn't even trigger the upstream price lookup. Only blocks
   // *new* purchases; an order already in flight when an account gets
   // frozen still resolves through its normal expiry/refund path untouched.
@@ -152,39 +345,22 @@ export async function purchaseNumber(
   if (!service) throw new PurchaseError("Service not found or inactive", 404);
   if (!country) throw new PurchaseError("Country not found or inactive", 404);
 
-  // Re-validates the customer's chosen operator against a fresh 5sim fetch
-  // rather than trusting whatever was displayed when they opened the
-  // picker — stock/rate can shift in the moments between fetching options
-  // and confirming a purchase, same "never trust a client-supplied price"
-  // rule this function already applied to price, now extended to the
-  // operator choice itself. A chosen operator that's dropped out of the
-  // ranked list (out of stock, or its rate fell below
-  // MIN_ACCEPTABLE_RATE — see lib/5sim/client.ts's rankOperators) is
-  // rejected rather than silently substituted for a different one; the
-  // client's job on a 409 here is to re-fetch the options and let the
-  // customer choose again, not to retry blindly.
-  const { options } = await getOperatorPrices(country.fivesim_country_code, service.fivesim_product_code);
-  const upstreamProduct = options.find((option) => option.operator === params.operator);
-  if (!upstreamProduct) {
-    throw new PurchaseError(
-      `That operator is no longer available for ${service.name} in ${country.name} — please choose another.`,
-      409,
-      { reason: "operator_unavailable" },
-    );
-  }
+  const provider = await resolveProvider(admin, service, country);
+  const quote = await quoteChosenOption(provider, service, country, params.operator);
 
   const [allRules, fxRates, feeSchedule] = await Promise.all([
     fetchAllPricingRules(admin),
     fetchPricingFxRates(admin, UPSTREAM_CURRENCY_PAIR),
     fetchActiveFeeSchedule(admin),
   ]);
-  // Real funding cost, not just the market rate (see effectiveFxRate) —
-  // used for both the price and upstream_cost_kobo below, so profit
-  // reports reflect what the provider balance actually cost us.
-  const fxRate = effectiveFxRate(fxRates, service.provider);
+  // Real funding cost of the provider that sells this number, not just the
+  // market rate (see effectiveFxRate) — used for both the price and
+  // upstream_cost_kobo below, so profit reports reflect what that
+  // provider's balance actually cost us.
+  const fxRate = effectiveFxRate(fxRates, provider);
 
   const resolved = priceFromRulesAndRate(allRules, fxRate, service.id, country.id, {
-    amount: upstreamProduct.cost,
+    amount: quote.costUsd,
     currency: "USD",
   });
 
@@ -204,49 +380,17 @@ export async function purchaseNumber(
     throw new PurchaseError("Insufficient wallet balance", 402, {
       reason: "insufficient_balance",
       shortfallKobo: resolved.priceKobo - balanceKobo,
+      provider,
     });
   }
 
-  // Point of no return — this spends real money on 5sim's side. Nothing
-  // above this line has written anything or cost anything.
-  let fivesimOrder;
-  try {
-    fivesimOrder = await buyActivation(
-      country.fivesim_country_code,
-      upstreamProduct.operator,
-      service.fivesim_product_code,
-    );
-  } catch (err) {
-    // Full 5sim error detail (which operator/product/country, the raw
-    // response) is logged here for us to investigate — the customer only
-    // ever sees the mapped, actionable message from
-    // customerFacingPurchaseErrorMessage (lib/5sim/client.ts), never the
-    // raw 5sim string. See that function's comment for why: several of
-    // 5sim's own error strings ("not enough user balance" in particular)
-    // describe our 5sim account, not the customer's wallet, and would be
-    // actively misleading shown as-is.
-    console.error(
-      `5sim buyActivation failed for ${service.fivesim_product_code}/${country.fivesim_country_code}:`,
-      err,
-    );
-    const rawMessage = errorMessage(err);
-    const lowerMessage = rawMessage.toLowerCase();
-    throw new PurchaseError(customerFacingPurchaseErrorMessage(rawMessage), 502, {
-      reason: lowerMessage.includes("no free phones")
-        ? "upstream_no_numbers"
-        : // Our 5sim account is out of funds, not the customer's wallet.
-          lowerMessage.includes("not enough user balance")
-          ? "provider_balance"
-          : "other",
-      internalMessage: rawMessage,
-    });
-  }
+  // Nothing above this line has written anything or cost anything.
+  const bought = await buyFromProvider(admin, quote, service, country);
 
-  // 5sim's actual charged price can differ from the quote we just computed
-  // (observed live during testing) — upstream_cost_kobo is what we were
-  // really charged, for accurate margin reporting; price_kobo is what we
-  // charge the user, the quote we already committed to.
-  const upstreamCostKobo = Math.round(fivesimOrder.price * fxRate * 100);
+  // upstream_cost_kobo is what we were really charged, for accurate margin
+  // reporting; price_kobo is what we charge the user, the quote we already
+  // committed to.
+  const upstreamCostKobo = Math.round(bought.chargedUsd * fxRate * 100);
   const expiresAt = new Date(Date.now() + ORDER_TTL_MINUTES * 60_000).toISOString();
 
   // Order creation and the wallet debit happen as one Postgres transaction
@@ -254,51 +398,63 @@ export async function purchaseNumber(
   // for any reason (most likely the negative-balance guard catching a race
   // lost against another concurrent purchase), the order insert rolls back
   // automatically with it. Nothing left to compensate-delete on our side;
-  // only the upstream 5sim purchase can still need cancelling.
+  // only the upstream purchase can still need cancelling.
   const { data: order, error: rpcError } = await admin.rpc("create_order_and_debit_wallet", {
     p_user_id: params.userId,
     p_service_id: service.id,
     p_country_code: country.fivesim_country_code,
-    p_fivesim_order_id: String(fivesimOrder.id),
-    p_phone_number: fivesimOrder.phone,
+    // The upstream order id for p_provider (named for 5sim for backwards
+    // compatibility — see the 20261029120000 migration).
+    p_fivesim_order_id: bought.providerOrderId,
+    p_phone_number: bought.phone,
     p_price_kobo: resolved.priceKobo,
     p_upstream_cost_kobo: upstreamCostKobo,
     p_expires_at: expiresAt,
-    p_metadata: { fivesim_order_id: fivesimOrder.id, service: service.name, country: country.name },
-    // The customer's chosen operator (re-validated above, see
-    // getOperatorPrices) and the rate it was judged on at purchase time
-    // (judgedRate: 7-day rate168, else overall rate) — also what lets
-    // margin-report.ts and future passes join actual order outcomes
-    // (sms_received vs expired/cancelled) against the rate that cleared
-    // the floor.
-    p_fivesim_operator: upstreamProduct.operator,
-    p_fivesim_operator_rate: judgedRate(upstreamProduct),
+    p_metadata: {
+      provider,
+      provider_order_id: bought.providerOrderId,
+      ...(provider === "5sim" ? { fivesim_order_id: Number(bought.providerOrderId) } : {}),
+      service: service.name,
+      country: country.name,
+    },
+    // 5sim: the customer's chosen operator and the rate it was judged on at
+    // purchase time (judgedRate: 7-day rate168, else overall rate), so
+    // order outcomes can be joined against the rate that cleared the floor.
+    // Grizzly: the chosen supplier and our quoted vs. charged USD, for the
+    // same per-supplier delivery analysis (Grizzly reports no rates).
+    ...(quote.provider === "5sim"
+      ? { p_fivesim_operator: quote.operator, p_fivesim_operator_rate: quote.judgedRate }
+      : {
+          p_provider_supplier_id: quote.supplierId,
+          p_upstream_quoted_usd: quote.costUsd,
+          p_upstream_charged_usd: bought.chargedUsd,
+          ...(bought.activationTime ? { p_upstream_activation_time: bought.activationTime } : {}),
+        }),
     p_payment_fee_kobo: paymentFeeKobo,
     p_fee_schedule_id: feeSchedule?.id,
-    p_provider: service.provider,
+    p_provider: provider,
   });
 
   if (rpcError || !order) {
-    await safeCancelUpstream(fivesimOrder.id);
     const message = errorMessage(rpcError);
+    await abandonUpstreamPurchase(admin, provider, bought.providerOrderId, "order_record_failed", message);
     const lostBalanceRace = message.includes("negative");
     throw new PurchaseError(
       lostBalanceRace ? "Insufficient wallet balance" : "Failed to record the purchase — it was reversed",
       lostBalanceRace ? 402 : 500,
-      { reason: lostBalanceRace ? "insufficient_balance" : "other", internalMessage: message },
+      { reason: lostBalanceRace ? "insufficient_balance" : "other", internalMessage: message, provider },
     );
   }
 
   // Best-effort, non-blocking of the response below (same pattern as
   // safeCancelUpstream) — schedules the one-shot callback that's meant to
-  // actually land the upstream cancel inside 5sim's cancel window (see
+  // actually land the upstream cancel promptly at expiry (see
   // ORDER_TTL_MINUTES' comment above and lib/qstash/client.ts). If this
-  // fails, the order isn't lost — the unchanged GitHub Actions/daily-cron
-  // backstops still eventually sweep it, just slower. scheduleOrderExpiry
-  // already catches its own errors internally and never throws, but the
-  // promise this makes ("never blocks the purchase response") is
-  // important enough to hold here too, not just trust that implementation
-  // detail.
+  // fails, the order isn't lost — the GitHub Actions/daily-cron backstops
+  // still eventually sweep it, just slower. scheduleOrderExpiry already
+  // catches its own errors internally and never throws, but the promise
+  // this makes ("never blocks the purchase response") is important enough
+  // to hold here too, not just trust that implementation detail.
   try {
     await scheduleOrderExpiry(order.id, ORDER_TTL_MINUTES * 60 + QSTASH_CALLBACK_PADDING_SECONDS);
   } catch (err) {

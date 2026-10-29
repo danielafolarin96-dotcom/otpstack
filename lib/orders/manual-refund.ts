@@ -1,7 +1,8 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/types/database";
-import { cancelOrder } from "@/lib/5sim/client";
+import { cancelUpstreamWithRecovery } from "@/lib/orders/upstream-cancel-queue";
+import { asProviderName } from "@/lib/providers/policy";
 import { recordWalletTransaction } from "@/lib/wallet/ledger";
 import { recordAdminAction } from "@/lib/audit/log";
 import { recordFinanceEvent } from "@/lib/finance/ledger";
@@ -72,19 +73,20 @@ export async function manualRefundOrder(
   // sms_received order already delivered a working code, so there's
   // nothing to recover upstream and cancelling would be meaningless (see
   // this function's header comment). upstreamCancelSucceeded feeds the
-  // finance_events reversal below: same recovered-vs-lost distinction the
-  // automatic refund paths track via orders.upstream_cancel_succeeded, just
-  // determined here instead of persisted on the order row.
+  // finance_events reversal below and, for a pending claim, is persisted on
+  // the order like the automatic refund paths do — which is also what lets
+  // a queued Grizzly cancel (still inside its ~5-minute lock) record the
+  // recovery later (lib/orders/upstream-cancel-queue.ts).
   let upstreamCancelSucceeded = false;
   if (previousStatus === "pending") {
-    try {
-      await cancelOrder(claimed.provider_order_id);
-      upstreamCancelSucceeded = true;
-    } catch (err) {
-      console.error(
-        `Failed to cancel upstream 5sim order ${claimed.provider_order_id} on manual refund:`,
-        err,
-      );
+    const outcome = await cancelUpstreamWithRecovery(admin, claimed);
+    upstreamCancelSucceeded = outcome.succeeded;
+    const { error: markError } = await admin
+      .from("orders")
+      .update({ upstream_cancel_succeeded: outcome.succeeded, upstream_cancel_error: outcome.error })
+      .eq("id", claimed.id);
+    if (markError) {
+      console.error(`Failed to record upstream_cancel_succeeded for order ${claimed.id}:`, markError);
     }
   }
 
@@ -128,7 +130,7 @@ export async function manualRefundOrder(
       eventType: "refund_issued",
       serviceId: claimed.service_id,
       countryCode: claimed.country_code,
-      provider: recognized?.provider ?? "5sim",
+      provider: recognized?.provider ?? asProviderName(claimed.provider),
       revenueKobo: -claimed.price_kobo,
       providerCostKobo: upstreamCancelSucceeded ? -claimed.upstream_cost_kobo : 0,
       paymentFeeKobo: recognized ? -recognized.payment_fee_kobo : 0,

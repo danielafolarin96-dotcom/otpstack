@@ -28,6 +28,7 @@ const FAILURE = {
   countryId: COUNTRY_ID,
   operator: "virtual2",
   reason: "insufficient_balance" as const,
+  provider: "grizzly",
   httpStatus: 402,
   message: "Insufficient wallet balance",
 };
@@ -48,9 +49,18 @@ describe("recordPurchaseFailure", () => {
       country_code: "nigeria",
       operator: "virtual2",
       reason: "insufficient_balance",
+      provider: "grizzly",
       http_status: 402,
       message: "Insufficient wallet balance",
     });
+  });
+
+  it("stores a null provider when the attempt failed before routing", async () => {
+    const { client, insert } = fakeAdminClient();
+
+    await recordPurchaseFailure(client, { ...FAILURE, provider: undefined });
+
+    expect(insert).toHaveBeenCalledWith(expect.objectContaining({ provider: null }));
   });
 
   it("stores null for non-UUID ids and non-string operators instead of failing the insert", async () => {
@@ -86,6 +96,12 @@ describe("sanitizeFailureMessage", () => {
     const cleaned = sanitizeFailureMessage(raw);
     expect(cleaned).not.toMatch(/abc123|eyJhbGci|sk_live_abcdef/);
     expect(cleaned).toContain("[redacted]");
+  });
+
+  it("redacts a Grizzly api_key query parameter", () => {
+    expect(sanitizeFailureMessage("GET handler_api.php?api_key=abc123&action=getNumberV2")).toBe(
+      "GET handler_api.php?api_key=[redacted]&action=getNumberV2",
+    );
   });
 
   it("collapses whitespace and leaves ordinary messages alone", () => {

@@ -2,12 +2,20 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/types/database";
 import { cancelOrder, checkOrder, FiveSimError, type FiveSimOrder } from "@/lib/5sim/client";
+import { cancelActivation, finishActivation, getActivationState, GrizzlyError } from "@/lib/grizzly/client";
 import { expireAndRefundOrder } from "./expire-and-refund";
 
 vi.mock("@/lib/5sim/client", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/5sim/client")>();
   return { FiveSimError: actual.FiveSimError, cancelOrder: vi.fn(), checkOrder: vi.fn() };
 });
+
+vi.mock("@/lib/grizzly/client", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/grizzly/client")>();
+  return { ...actual, cancelActivation: vi.fn(), finishActivation: vi.fn(), getActivationState: vi.fn() };
+});
+
+vi.mock("@/lib/qstash/client", () => ({ scheduleUpstreamCancelRetry: vi.fn() }));
 
 const EXPIRES_AT = "2026-10-12T02:10:53.000Z";
 
@@ -55,6 +63,7 @@ function fakeAdminClient(options: {
   financeLookupResult?: { data: unknown; error: unknown };
   financeInsertResult?: { error: unknown };
   onFinanceInsert?: (payload: Record<string, unknown>) => void;
+  onQueueUpsert?: (payload: Record<string, unknown>) => void;
   callOrder?: string[];
 }) {
   const {
@@ -67,6 +76,7 @@ function fakeAdminClient(options: {
     financeLookupResult = { data: { provider: "5sim", payment_fee_kobo: 2_250 }, error: null },
     financeInsertResult = { error: null },
     onFinanceInsert,
+    onQueueUpsert,
     callOrder,
   } = options;
 
@@ -122,6 +132,14 @@ function fakeAdminClient(options: {
           callOrder?.push("finance_events.insert");
           onFinanceInsert?.(payload);
           return Promise.resolve(financeInsertResult);
+        },
+      };
+    }
+    if (table === "upstream_cancel_queue") {
+      return {
+        upsert: (payload: Record<string, unknown>) => {
+          onQueueUpsert?.(payload);
+          return Promise.resolve({ error: null });
         },
       };
     }
@@ -439,5 +457,146 @@ describe("expireAndRefundOrder", () => {
 
       expect(markPayload).toEqual({ upstream_cancel_succeeded: true, upstream_cancel_error: null });
     });
+  });
+
+  describe("Grizzly orders", () => {
+    // Activation at 12:00:00 on Grizzly's clock, 09:00:01Z on ours; 5-minute hold.
+    const GRIZZLY_ORDER = {
+      ...ORDER,
+      provider: "grizzly",
+      provider_order_id: "38496653",
+      fivesim_order_id: null,
+      created_at: "2026-10-29T09:00:01.000Z",
+      upstream_activation_time: "2026-10-29 12:00:00",
+      expires_at: "2026-10-29T09:05:01.000Z",
+    };
+    const LOCKED = new GrizzlyError("setStatus", 200, "EARLY_CANCEL_DENIED");
+    const claimed = { data: { ...GRIZZLY_ORDER, status: "expired_refunded" }, error: null };
+
+    beforeEach(() => {
+      vi.mocked(getActivationState).mockResolvedValue({ state: "waiting" });
+    });
+
+    it("cancels with setStatus 8 and reverses the cost when the cancel lands", async () => {
+      vi.mocked(cancelActivation).mockResolvedValue(undefined);
+      let markPayload: Record<string, unknown> | undefined;
+      let financePayload: Record<string, unknown> | undefined;
+      const client = fakeAdminClient({
+        claimResult: claimed,
+        onMark: (p) => (markPayload = p),
+        onFinanceInsert: (p) => (financePayload = p),
+      });
+
+      await expect(expireAndRefundOrder(client, GRIZZLY_ORDER)).resolves.toEqual({ refunded: true });
+
+      expect(cancelActivation).toHaveBeenCalledWith("38496653");
+      expect(cancelOrder).not.toHaveBeenCalled();
+      expect(markPayload).toEqual({ upstream_cancel_succeeded: true, upstream_cancel_error: null });
+      expect(financePayload).toMatchObject({ provider_cost_kobo: -45_000 });
+    });
+
+    it("still refunds when the cancel is locked, books the cost as lost for now, and queues a retry", async () => {
+      vi.mocked(cancelActivation).mockRejectedValue(LOCKED);
+      let markPayload: Record<string, unknown> | undefined;
+      let financePayload: Record<string, unknown> | undefined;
+      let queued: Record<string, unknown> | undefined;
+      const callOrder: string[] = [];
+      const client = fakeAdminClient({
+        claimResult: claimed,
+        onMark: (p) => (markPayload = p),
+        onFinanceInsert: (p) => (financePayload = p),
+        onQueueUpsert: (p) => (queued = p),
+        callOrder,
+      });
+
+      await expect(expireAndRefundOrder(client, GRIZZLY_ORDER)).resolves.toEqual({ refunded: true });
+
+      expect(callOrder).toContain("wallet_transactions.insert");
+      expect(markPayload).toEqual({
+        upstream_cancel_succeeded: false,
+        upstream_cancel_error: "grizzly setStatus failed: 200 EARLY_CANCEL_DENIED",
+      });
+      expect(financePayload).toMatchObject({ provider_cost_kobo: 0 });
+      expect(queued).toMatchObject({
+        provider: "grizzly",
+        provider_order_id: "38496653",
+        order_id: "order-1",
+        reason: "cancel_locked",
+      });
+    });
+
+    it("decision 6: a failed cancel on an activation Grizzly already cancelled counts as recovered, error kept", async () => {
+      vi.mocked(cancelActivation).mockRejectedValue(new GrizzlyError("setStatus", 200, "BAD_STATUS"));
+      vi.mocked(getActivationState).mockResolvedValueOnce({ state: "waiting" }).mockResolvedValueOnce({ state: "cancelled" });
+      let markPayload: Record<string, unknown> | undefined;
+      const onQueueUpsert = vi.fn();
+      const client = fakeAdminClient({ claimResult: claimed, onMark: (p) => (markPayload = p), onQueueUpsert });
+
+      await expireAndRefundOrder(client, GRIZZLY_ORDER);
+
+      expect(markPayload).toEqual({
+        upstream_cancel_succeeded: true,
+        upstream_cancel_error: "grizzly setStatus failed: 200 BAD_STATUS",
+      });
+      expect(onQueueUpsert).not.toHaveBeenCalled();
+    });
+
+    it("delivers an SMS that arrived inside the hold (judged on Grizzly's clock) and completes the activation", async () => {
+      vi.mocked(getActivationState).mockResolvedValue({
+        state: "received",
+        code: "852508",
+        text: "Your code is 852508",
+        smsDateTime: "2026-10-29 12:04:30",
+      });
+      let deliverPayload: Record<string, unknown> | undefined;
+      const client = fakeAdminClient({
+        claimResult: claimed,
+        deliverResult: { data: { ...GRIZZLY_ORDER, status: "sms_received" }, error: null },
+        onDeliver: (p) => (deliverPayload = p),
+      });
+
+      await expect(expireAndRefundOrder(client, GRIZZLY_ORDER)).resolves.toEqual({ refunded: false, smsReceived: true });
+
+      expect(deliverPayload).toMatchObject({ status: "sms_received", otp_code: "852508" });
+      expect(finishActivation).toHaveBeenCalledWith("38496653");
+      expect(cancelActivation).not.toHaveBeenCalled();
+    });
+
+    it("refunds when the SMS landed after the hold ended", async () => {
+      vi.mocked(getActivationState).mockResolvedValue({
+        state: "received",
+        code: "852508",
+        text: null,
+        smsDateTime: "2026-10-29 12:05:30",
+      });
+      vi.mocked(cancelActivation).mockRejectedValue(new GrizzlyError("setStatus", 200, "BAD_STATUS"));
+      const onDeliver = vi.fn();
+      const client = fakeAdminClient({ claimResult: claimed, onDeliver });
+
+      await expect(expireAndRefundOrder(client, GRIZZLY_ORDER)).resolves.toEqual({ refunded: true });
+      expect(onDeliver).not.toHaveBeenCalled();
+    });
+  });
+
+  it("decision 6 (5sim): a failed cancel on an order 5sim already timed out with no SMS counts as recovered", async () => {
+    vi.mocked(cancelOrder).mockRejectedValue(new FiveSimError("/user/cancel/999", 400, "order expired"));
+    vi.mocked(checkOrder)
+      .mockResolvedValueOnce(upstreamOrder([]))
+      .mockResolvedValueOnce({ ...upstreamOrder([]), status: "TIMEOUT" });
+    let markPayload: Record<string, unknown> | undefined;
+    let financePayload: Record<string, unknown> | undefined;
+    const client = fakeAdminClient({
+      claimResult: { data: { ...ORDER, status: "expired_refunded" }, error: null },
+      onMark: (p) => (markPayload = p),
+      onFinanceInsert: (p) => (financePayload = p),
+    });
+
+    await expireAndRefundOrder(client, ORDER);
+
+    expect(markPayload).toEqual({
+      upstream_cancel_succeeded: true,
+      upstream_cancel_error: "5sim /user/cancel/999 failed: 400 order expired",
+    });
+    expect(financePayload).toMatchObject({ provider_cost_kobo: -45_000 });
   });
 });

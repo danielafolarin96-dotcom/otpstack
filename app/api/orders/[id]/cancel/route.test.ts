@@ -243,4 +243,21 @@ describe("POST /api/orders/[id]/cancel", () => {
     expect(checkOrder).not.toHaveBeenCalled();
     expect(updates).toHaveLength(0);
   });
+
+  it("refuses to cancel a Grizzly order (cancel is locked for the whole hold) and touches nothing upstream", async () => {
+    const updates: Record<string, unknown>[] = [];
+    vi.mocked(createAdminClient).mockReturnValue(
+      fakeAdminClient({ order: baseOrder({ provider: "grizzly", provider_order_id: "38496653" }), updates }) as never,
+    );
+
+    const response = await call();
+    const json = await response.json();
+
+    expect(response.status).toBe(409);
+    expect(json.error).toBe("This number can't be cancelled early — it refunds automatically if no code arrives.");
+    expect(updates).toEqual([]);
+    expect(checkOrder).not.toHaveBeenCalled();
+    expect(cancelOrder).not.toHaveBeenCalled();
+    expect(recordWalletTransaction).not.toHaveBeenCalled();
+  });
 });

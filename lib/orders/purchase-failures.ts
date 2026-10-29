@@ -28,6 +28,7 @@ export function sanitizeFailureMessage(raw: string): string {
     .replace(/bearer\s+\S+/gi, "Bearer [redacted]")
     .replace(/\beyJ[\w-]+\.[\w-]+\.[\w-]*/g, "[redacted]") // JWTs (Supabase keys, sessions)
     .replace(/\b(sk|pk)_(live|test)_\w+/g, "[redacted]") // Paystack keys
+    .replace(/api_key=[^&\s]+/gi, "api_key=[redacted]") // Grizzly's key rides in the query string
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, MESSAGE_MAX_LENGTH);
@@ -41,6 +42,9 @@ export interface PurchaseFailure {
   countryId?: unknown;
   operator?: unknown;
   reason: PurchaseFailureReason;
+  // Which provider the attempt was routed to; absent when it failed before
+  // routing (frozen account, concurrency cap, bad request...).
+  provider?: string;
   httpStatus: number;
   message: string;
 }
@@ -74,6 +78,7 @@ export async function recordPurchaseFailure(
       country_code: countryCode,
       operator: typeof failure.operator === "string" ? failure.operator.slice(0, OPERATOR_MAX_LENGTH) : null,
       reason: failure.reason,
+      provider: failure.provider ?? null,
       http_status: failure.httpStatus,
       message: sanitizeFailureMessage(failure.message),
     });

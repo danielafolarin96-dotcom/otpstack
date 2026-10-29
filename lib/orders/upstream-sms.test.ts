@@ -1,33 +1,7 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { checkOrder, FiveSimError, type FiveSimOrder } from "@/lib/5sim/client";
-import { describeUpstreamCancelError, fetchUpstreamSms, firstSmsArrivedAt } from "./upstream-sms";
-
-vi.mock("@/lib/5sim/client", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/5sim/client")>();
-  return { FiveSimError: actual.FiveSimError, checkOrder: vi.fn() };
-});
-
-beforeEach(() => {
-  vi.clearAllMocks();
-});
-
-describe("fetchUpstreamSms", () => {
-  it("returns the order's sms entries", async () => {
-    const sms = [{ created_at: "2026-10-12T02:08:31Z", code: "123456" }];
-    vi.mocked(checkOrder).mockResolvedValue({ sms } as FiveSimOrder);
-    await expect(fetchUpstreamSms("999")).resolves.toEqual(sms);
-  });
-
-  it("normalizes a null sms field to an empty array", async () => {
-    vi.mocked(checkOrder).mockResolvedValue({ sms: null } as FiveSimOrder);
-    await expect(fetchUpstreamSms("999")).resolves.toEqual([]);
-  });
-
-  it("returns null (caller falls back to refunding) when the check fails", async () => {
-    vi.mocked(checkOrder).mockRejectedValue(new Error("5sim unreachable"));
-    await expect(fetchUpstreamSms("999")).resolves.toBeNull();
-  });
-});
+import { afterEach, describe, expect, it } from "vitest";
+import { FiveSimError } from "@/lib/5sim/client";
+import { GrizzlyError } from "@/lib/grizzly/client";
+import { describeUpstreamCancelError, firstSmsArrivedAt } from "./upstream-sms";
 
 describe("firstSmsArrivedAt", () => {
   it("returns the earliest arrival across entries", () => {
@@ -47,8 +21,10 @@ describe("firstSmsArrivedAt", () => {
 
 describe("describeUpstreamCancelError", () => {
   const originalKey = process.env.FIVESIM_API_KEY;
+  const originalGrizzlyKey = process.env.GRIZZLY_API_KEY;
   afterEach(() => {
     process.env.FIVESIM_API_KEY = originalKey;
+    process.env.GRIZZLY_API_KEY = originalGrizzlyKey;
   });
 
   it("uses the FiveSimError message (path, status, body)", () => {
@@ -65,6 +41,13 @@ describe("describeUpstreamCancelError", () => {
   it("scrubs the API key if an error ever echoes it back", () => {
     process.env.FIVESIM_API_KEY = "test-secret-key";
     expect(describeUpstreamCancelError(new Error("bad token test-secret-key here"))).toBe("bad token [redacted] here");
+  });
+
+  it("uses the GrizzlyError message and scrubs the Grizzly key too", () => {
+    process.env.GRIZZLY_API_KEY = "grizzly-secret";
+    expect(describeUpstreamCancelError(new GrizzlyError("setStatus", 200, "EARLY_CANCEL_DENIED grizzly-secret"))).toBe(
+      "grizzly setStatus failed: 200 EARLY_CANCEL_DENIED [redacted]",
+    );
   });
 
   it("handles non-Error throwables", () => {

@@ -31,6 +31,35 @@ describe("summarizeFinanceEvents", () => {
     expect(totals.netProfitKobo).toBe(78_500);
   });
 
+  it("nets a refund first booked as a lost cost, then recovered by a queued Grizzly cancel, to zero profit", () => {
+    const events = [
+      recognized({ provider: "grizzly" }),
+      recognized({
+        provider: "grizzly",
+        eventType: "refund_issued",
+        revenueKobo: -100_000,
+        providerCostKobo: 0, // cancel was still locked at expiry -> booked as lost
+        paymentFeeKobo: -1_500,
+        createdAt: "2026-09-20T10:05:10.000Z",
+      }),
+      recognized({
+        provider: "grizzly",
+        eventType: "provider_cost_recovered",
+        revenueKobo: 0,
+        providerCostKobo: -20_000, // queued cancel landed after the lock
+        paymentFeeKobo: 0,
+        createdAt: "2026-09-20T10:06:10.000Z",
+      }),
+    ];
+
+    const { rows, totals } = summarizeFinanceEvents(events);
+
+    expect(rows[0].providerCostKobo).toBe(0);
+    expect(rows[0].netProfitKobo).toBe(0);
+    expect(rows[0].refundKobo).toBe(100_000);
+    expect(totals.refundedOrderCount).toBe(1);
+  });
+
   it("nets a recovered refund (upstream cancel succeeded) to zero profit", () => {
     const events = [
       recognized(),

@@ -51,3 +51,40 @@ describe("scheduleOrderExpiry", () => {
     expect(publishJSON).not.toHaveBeenCalled();
   });
 });
+
+describe("scheduleUpstreamCancelRetry", () => {
+  const originalEnv = { ...process.env };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.resetModules();
+    process.env.APP_URL = "https://otpstack.com.ng";
+    process.env.CRON_SECRET = "test-cron-secret";
+    process.env.QSTASH_TOKEN = "test-qstash-token";
+  });
+
+  afterEach(() => {
+    process.env = { ...originalEnv };
+  });
+
+  it("publishes a queue-only call to the expire-orders route, delay rounded up", async () => {
+    publishJSON.mockResolvedValue({ messageId: "msg_2" });
+    const { scheduleUpstreamCancelRetry } = await import("./client");
+
+    await scheduleUpstreamCancelRetry(59.2);
+
+    expect(publishJSON).toHaveBeenCalledWith({
+      url: "https://otpstack.com.ng/api/cron/expire-orders?queue=1",
+      headers: { Authorization: "Bearer test-cron-secret" },
+      delay: 60,
+      body: {},
+    });
+  });
+
+  it("never throws when publishing fails", async () => {
+    publishJSON.mockRejectedValue(new Error("qstash unreachable"));
+    const { scheduleUpstreamCancelRetry } = await import("./client");
+
+    await expect(scheduleUpstreamCancelRetry(60)).resolves.toBeUndefined();
+  });
+});
