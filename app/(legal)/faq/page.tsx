@@ -8,7 +8,7 @@ export const metadata: Metadata = { title: "FAQ — OtpStack" };
 export default function FaqPage() {
   return (
     <>
-      <LegalTitle title="Frequently asked questions" updatedAt="11 September 2026" />
+      <LegalTitle title="Frequently asked questions" updatedAt="29 October 2026" />
 
       <LegalSection heading="What is OtpStack?">
         <p>
@@ -27,7 +27,7 @@ export default function FaqPage() {
 
       <LegalSection heading="How long do I have to receive my code?">
         <p>
-          3 minutes from the moment you buy a number. Your dashboard shows a live countdown while
+          5 minutes from the moment you buy a number. Your dashboard shows a live countdown while
           it&apos;s active.
         </p>
       </LegalSection>
@@ -41,8 +41,10 @@ export default function FaqPage() {
 
       <LegalSection heading="Can I cancel a purchase myself?">
         <p>
-          Yes — while an order is still pending (before a code arrives), you can cancel it from your
-          dashboard for the same full refund you&apos;d get on expiry.
+          Where available, yes — while an order is still pending (before a code arrives), you can
+          cancel it from your dashboard for the same full refund you&apos;d get on expiry. Some numbers
+          can&apos;t be cancelled early; those are refunded automatically if no code arrives within the
+          5 minutes.
         </p>
       </LegalSection>
 

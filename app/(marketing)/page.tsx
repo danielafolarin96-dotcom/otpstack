@@ -28,7 +28,7 @@ const PROCESS_STEPS = [
   {
     n: "03",
     title: "Receive your code",
-    body: "Number is yours for 3 minutes. No code in time, you're refunded automatically.",
+    body: "Number is yours for 5 minutes. No code in time, you're refunded automatically.",
   },
 ];
 

@@ -38,7 +38,7 @@ export default async function GetANumberPage({
         <div>
           <h1 className="font-display text-2xl font-bold text-ink">Get a number</h1>
           <p className="text-sm text-text-dim">
-            Your number is held for 3 minutes — cancel any time before it arrives for a full refund.
+            Your number is held for 5 minutes. If no code arrives, you&apos;re refunded automatically.
           </p>
         </div>
         <CountrySelect countries={countries} selectedId={selectedCountryId} />

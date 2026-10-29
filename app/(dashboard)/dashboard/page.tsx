@@ -5,6 +5,7 @@ import { computeCatalogPrices, fetchActiveCountries } from "@/lib/pricing/catalo
 import { EmptyState } from "./_components/empty-state";
 import { TransactionsTable } from "./wallet/transactions-table";
 import { ActiveNumberPanel, type ActiveOrder } from "./active-number-panel";
+import { customerCanCancel } from "@/lib/providers/policy";
 import { DashboardAppSearch } from "./app-search";
 
 const QUICK_BUY_COUNT = 4;
@@ -60,6 +61,7 @@ export default async function OverviewPage() {
         otpCode: pendingOrder.otp_code,
         expiresAt: pendingOrder.expires_at,
         serviceName: (pendingOrder as unknown as { services: { name: string } | null }).services?.name ?? "Number",
+        canCancel: customerCanCancel(pendingOrder.provider),
       }
     : null;
 

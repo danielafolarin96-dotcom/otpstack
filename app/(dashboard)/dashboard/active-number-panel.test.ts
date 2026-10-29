@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { resolveVisibleOrder, startPollLoop, type ActiveOrder } from "./active-number-panel";
+import { pendingOrderAction, resolveVisibleOrder, startPollLoop, type ActiveOrder } from "./active-number-panel";
 
 const PENDING: ActiveOrder = {
   id: "order-1",
@@ -11,6 +11,22 @@ const PENDING: ActiveOrder = {
 };
 
 const DELIVERED: ActiveOrder = { ...PENDING, status: "sms_received", otpCode: "123456" };
+
+describe("pendingOrderAction", () => {
+  it("offers Cancel on a pending order by default (5sim, or older rows with no flag)", () => {
+    expect(pendingOrderAction(PENDING)).toBe("cancel");
+    expect(pendingOrderAction({ ...PENDING, canCancel: true })).toBe("cancel");
+  });
+
+  it("offers the auto-refund note instead of Cancel when the number can't be cancelled early (Grizzly)", () => {
+    expect(pendingOrderAction({ ...PENDING, canCancel: false })).toBe("auto_refund");
+  });
+
+  it("offers nothing once the order is resolved", () => {
+    expect(pendingOrderAction(DELIVERED)).toBeNull();
+    expect(pendingOrderAction({ ...DELIVERED, canCancel: false })).toBeNull();
+  });
+});
 
 describe("resolveVisibleOrder", () => {
   it("keeps showing a delivered order — the reported bug: this used to disappear the instant status left pending", () => {

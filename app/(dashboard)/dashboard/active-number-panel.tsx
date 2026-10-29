@@ -39,6 +39,10 @@ export interface ActiveOrder {
   otpCode: string | null;
   expiresAt: string;
   serviceName: string;
+  // false for numbers that can't be cancelled early (Grizzly locks cancel
+  // for the whole hold — see lib/providers/policy.ts); they refund
+  // automatically at expiry. Absent = cancellable, as before.
+  canCancel?: boolean;
 }
 
 // Pure decision extracted out of the component so it's testable without a
@@ -56,6 +60,14 @@ export function resolveVisibleOrder(
   if (!order) return null;
   if (order.status !== "pending" && order.id === dismissedOrderId) return null;
   return order;
+}
+
+// What a still-pending order offers instead of a result: the Cancel button,
+// or — for numbers that can't be cancelled early — the auto-refund note.
+// Resolved orders offer neither.
+export function pendingOrderAction(order: ActiveOrder): "cancel" | "auto_refund" | null {
+  if (order.status !== "pending") return null;
+  return order.canCancel === false ? "auto_refund" : "cancel";
 }
 
 interface ListenerTarget {
@@ -261,7 +273,7 @@ export function ActiveNumberPanel({ order: initialOrder }: { order: ActiveOrder 
         <p className="mt-3 text-sm text-danger">This number was banned by the service.</p>
       )}
 
-      {order.status === "pending" && (
+      {pendingOrderAction(order) === "cancel" && (
         <button
           type="button"
           onClick={handleCancel}
@@ -270,6 +282,9 @@ export function ActiveNumberPanel({ order: initialOrder }: { order: ActiveOrder 
         >
           {cancelling ? "Cancelling…" : "Cancel for refund"}
         </button>
+      )}
+      {pendingOrderAction(order) === "auto_refund" && (
+        <p className="mt-3 text-sm text-text-dim">Refunds automatically if no code arrives.</p>
       )}
 
       {order.status !== "pending" && (

@@ -1,6 +1,6 @@
 # Terms of Service
 
-**OtpStack** — Last updated: September 15, 2026
+**OtpStack** — Last updated: October 29, 2026
 
 ## 1. Who this agreement is with
 
@@ -34,9 +34,9 @@ We do not control, and are not affiliated with, the third-party services (e.g. t
 
 ## 6. Purchases, holds, and refunds
 
-- When you buy a number, it's held for you for a limited period (currently 3 minutes) to receive an SMS code.
+- When you buy a number, it's held for you for a limited period (currently 5 minutes) to receive an SMS code.
 - If no code arrives before the hold expires, or the upstream provider itself reports the number timed out or was cancelled, your purchase is automatically refunded to your wallet in full.
-- You may cancel a pending purchase yourself before a code arrives; if the cancellation succeeds, you're refunded in full.
+- Where available, you may cancel a pending purchase yourself before a code arrives; if the cancellation succeeds, you're refunded in full.
 - If a number is banned or blocked by the third-party service you tried to verify with (a decision made by that third party, not us), that purchase is **not** eligible for a refund — we have no way to reverse a third party's decision to ban a number, and this risk is inherent to how these services work.
 - We do not guarantee that any specific service, country, or operator combination will have numbers in stock at the time you try to buy, or that a code will arrive even when a number is successfully purchased and held.
 

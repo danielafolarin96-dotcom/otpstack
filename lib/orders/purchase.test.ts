@@ -218,10 +218,10 @@ describe("purchaseNumber", () => {
 
     await purchaseNumber(client, purchaseParams());
 
-    // 3-minute TTL (see purchase.ts's ORDER_TTL_MINUTES comment) in seconds,
+    // 5-minute TTL (see purchase.ts's ORDER_TTL_MINUTES comment) in seconds,
     // plus the 10s QSTASH_CALLBACK_PADDING_SECONDS pad so the callback never
     // fires before expires_at and gets skipped by the cron route's query.
-    expect(scheduleOrderExpiry).toHaveBeenCalledWith("order-1", 190);
+    expect(scheduleOrderExpiry).toHaveBeenCalledWith("order-1", 310);
   });
 
   it("still returns the purchase result even when scheduling the expiry callback fails — best-effort, never blocks the response", async () => {

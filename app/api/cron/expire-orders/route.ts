@@ -3,7 +3,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { expireAndRefundOrder } from "@/lib/orders/expire-and-refund";
 import { processDueUpstreamCancels, type ProcessQueueResult } from "@/lib/orders/upstream-cancel-queue";
 
-// Per ARCHITECTURE.md's order lifecycle step 5 (3-minute TTL — see
+// Per ARCHITECTURE.md's order lifecycle step 5 (5-minute TTL — see
 // lib/orders/purchase.ts's ORDER_TTL_MINUTES). Auth here checks
 // `Authorization: Bearer $CRON_SECRET`, Vercel's documented pattern for
 // securing cron routes — also what lib/qstash/client.ts forwards to this

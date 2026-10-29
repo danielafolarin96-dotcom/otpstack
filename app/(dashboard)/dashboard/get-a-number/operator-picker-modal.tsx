@@ -252,7 +252,7 @@ export function OperatorPickerModal({
               {buying ? "Buying…" : "Buy"}
             </button>
             <p className="text-center text-xs text-text-dim">
-              Refunded automatically if no code arrives within 3 minutes. You can then try another operator.
+              Refunded automatically if no code arrives within 5 minutes. You can then try another operator.
             </p>
           </>
         )}

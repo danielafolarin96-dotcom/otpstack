@@ -33,26 +33,29 @@ import { computeFeeKobo, fetchActiveFeeSchedule } from "@/lib/finance/fee-schedu
 import { scheduleOrderExpiry } from "@/lib/qstash/client";
 import { resolveProvider, type ProviderName } from "@/lib/providers/route";
 
-// Shortened from 10 (Sept 2026) — deliberate product decision, not a
-// default: 5sim's own no-SMS auto-timeout is ~5 minutes (ARCHITECTURE.md's
-// cancel-window note), so a 10-minute customer-facing hold was always
-// longer than 5sim would actually wait, meaning a refund issued near the
-// end of that window almost never recovered the upstream cost (see
-// lib/orders/expire-and-refund.ts's comment). 3 minutes leaves roughly 2
-// minutes of headroom under that ~5-minute window for the QStash callback
-// this purchase schedules below (see scheduleOrderExpiry) to actually land
-// a cancel call in time, after accounting for QStash delivery latency and
-// the fact that "5 minute" in 5sim's own docs is prose, not a guaranteed
-// precise SLA.
-const ORDER_TTL_MINUTES = 3;
+// The customer-facing hold, for both providers (product decision, 29 Oct
+// 2026; previously 3 minutes, and 10 before that).
+//
+// History: the hold was cut to 3 minutes in Sept 2026 on the belief that
+// once 5sim auto-timed-out an order (~5 minutes, no SMS) the upstream cost
+// was lost, so our cancel had to land first. A check of 5sim's own payment
+// history (29 Oct 2026, ARCHITECTURE.md) showed the opposite: 5sim only
+// debits FINISHED orders — none of its TIMEOUT orders were ever charged.
+// So a hold that outlasts 5sim's timeout costs nothing, and the expiry
+// path records a TIMEOUT-with-no-SMS as cost recovered.
+//
+// 5 minutes also matches Grizzly, which locks cancel for ~5 minutes after
+// purchase: the expiry cancel (TTL + the QStash pad below) lands just after
+// the lock, and if it still hits it the cancel is queued and retried
+// (lib/orders/upstream-cancel-queue.ts).
+const ORDER_TTL_MINUTES = 5;
 // Padding added to the QStash callback's delay (not to the TTL/expires_at
 // itself): the cron route's query is `lt("expires_at", now())` at the
 // moment the callback lands — scheduling the callback for exactly TTL
 // would race that check if QStash fires even slightly early (clock skew,
 // delivery jitter), making expires_at <= now() and silently skipping the
 // order until a later backstop sweep catches it. 10s is comfortably past
-// any observed QStash delivery jitter without meaningfully eating into the
-// ~5-minute upstream cancel window (see this constant's comment above).
+// any observed QStash delivery jitter.
 const QSTASH_CALLBACK_PADDING_SECONDS = 10;
 // SECURITY.md's rate-limiting example for purchase: "a cap on concurrent
 // active/pending orders" — distinct from the time-windowed limits in
