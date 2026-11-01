@@ -689,8 +689,25 @@ describe("purchaseNumber via Grizzly", () => {
     expect(queued.notBefore.getTime()).toBeGreaterThanOrEqual(before + 330_000);
   });
 
-  it("never debits when Grizzly reports a non-USD currency", async () => {
+  it("does not gate on Grizzly's currency field — the live 643 response with a cost within quote sells normally", async () => {
+    // Observed live 1 Nov 2026: currency 643 while the USD balance moved by
+    // exactly activationCost. The field is logged, not trusted.
+    vi.spyOn(console, "log").mockImplementation(() => {});
     vi.mocked(buyGrizzlyActivation).mockResolvedValue({ ...ACTIVATION, currency: 643 });
+    const client = fakeAdminClient(grizzlyConfigs(), baseRpcResult());
+
+    await purchaseNumber(client, params());
+
+    expect(client.rpc).toHaveBeenCalledWith(
+      "create_order_and_debit_wallet",
+      expect.objectContaining({ p_provider: "grizzly", p_upstream_charged_usd: 0.52, p_upstream_cost_kobo: 81_224 }),
+    );
+    expect(enqueueUpstreamCancel).not.toHaveBeenCalled();
+    expect(console.log).toHaveBeenCalledWith(expect.stringContaining("currency field 643"));
+  });
+
+  it("still refuses a charge above the quote whatever the currency field says", async () => {
+    vi.mocked(buyGrizzlyActivation).mockResolvedValue({ ...ACTIVATION, activationCost: 0.53, currency: 840 });
     const client = fakeAdminClient(grizzlyConfigs(), baseRpcResult());
 
     await expect(purchaseNumber(client, params())).rejects.toMatchObject({ status: 502 });

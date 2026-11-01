@@ -12,7 +12,6 @@ import {
   buyActivation as buyGrizzlyActivation,
   customerFacingGrizzlyPurchaseMessage,
   getSupplierPrices,
-  GRIZZLY_USD_CURRENCY,
   GrizzlyError,
   rankSuppliers,
 } from "@/lib/grizzly/client";
@@ -62,8 +61,9 @@ const QSTASH_CALLBACK_PADDING_SECONDS = 10;
 // app/api/orders/route.ts, this bounds how many numbers one user can be
 // holding at once regardless of how spread out in time the purchases were.
 const MAX_CONCURRENT_ORDERS_PER_USER = 3;
-// Both providers price in USD (5sim observed; Grizzly's getNumberV2 reports
-// currency 840 = USD, checked on every purchase below).
+// Both providers price in USD (5sim observed; Grizzly's activationCost is in
+// our account currency, USD — its `currency` field is not, see
+// lib/grizzly/client.ts).
 const UPSTREAM_CURRENCY_PAIR = "USD_NGN";
 // Float slack when comparing Grizzly's charge with our quote — both are
 // Grizzly's own decimal strings, so anything beyond this is a real excess.
@@ -248,14 +248,21 @@ async function buyFromProvider(
       });
     }
 
+    // Grizzly's `currency` field doesn't reflect what we're charged in (see
+    // lib/grizzly/client.ts), so it is only logged for the record.
+    console.log(
+      "Grizzly activation " + activation.activationId + ": activationCost " + activation.activationCost +
+        " (currency field " + activation.currency + "), quote " + quote.costUsd + " USD",
+    );
+
     // maxPrice should make this impossible, but the quote is a promise to
-    // the customer: if Grizzly charged more than we quoted (or in a
-    // currency our cost conversion doesn't cover), don't sell the number.
-    // No debit happens; the activation is queued for cancel after the lock.
-    const overQuote = activation.activationCost > quote.costUsd + PRICE_EPSILON_USD;
-    const wrongCurrency = activation.currency !== null && activation.currency !== GRIZZLY_USD_CURRENCY;
-    if (overQuote || wrongCurrency) {
-      const detail = `Grizzly charged ${activation.activationCost} (currency ${activation.currency}) against a quote of ${quote.costUsd} USD for activation ${activation.activationId}`;
+    // the customer: if Grizzly charged more than we quoted, don't sell the
+    // number. No debit happens; the activation is queued for cancel after
+    // the lock.
+    if (activation.activationCost > quote.costUsd + PRICE_EPSILON_USD) {
+      const detail =
+        "Grizzly charged " + activation.activationCost + " (currency field " + activation.currency +
+        ") against a quote of " + quote.costUsd + " USD for activation " + activation.activationId;
       console.error(detail);
       await abandonUpstreamPurchase(admin, "grizzly", activation.activationId, "price_above_quote", detail);
       throw new PurchaseError("Something went wrong purchasing this number — please try again.", 502, {

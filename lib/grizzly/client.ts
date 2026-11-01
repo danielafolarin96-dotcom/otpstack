@@ -16,10 +16,13 @@ import { parseGetStatus, parseGetStatusV2, type GrizzlyActivationState } from ".
 // case a response ever echoes it.
 const BASE_URL = "https://api.grizzlysms.com/stubs/handler_api.php";
 
-// getNumberV2's `currency` is an ISO 4217 numeric code; 840 = USD, which is
-// what every price on our account has been in. Our cost conversion
-// (provider_funding_rates 'grizzly', USD_NGN) is only valid for USD.
-export const GRIZZLY_USD_CURRENCY = 840;
+// getNumberV2 also returns a `currency` field (an ISO 4217 numeric code in
+// the docs' example: 840). It does NOT describe what our account is charged
+// in: the first live purchase (1 Nov 2026, activation 688865291) returned
+// currency 643 (RUB) with activationCost 0.01, while our USD balance moved
+// by exactly $0.01 (3.00 -> 2.99, back to 3.00 on cancel). activationCost
+// is in the account currency (USD); `currency` is logged, never trusted or
+// gated on (product decision, 1 Nov 2026).
 
 const ERROR_BODY_MAX_LENGTH = 300;
 
