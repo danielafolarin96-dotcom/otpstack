@@ -4,6 +4,7 @@ import {
   cancelActivation,
   clearGrizzlyPricesCache,
   customerFacingGrizzlyPurchaseMessage,
+  extractActivationId,
   finishActivation,
   getActivationState,
   getBalance,
@@ -184,6 +185,46 @@ describe("buyActivation", () => {
   it("rejects a JSON body missing the activation fields", async () => {
     fetchMock.mockResolvedValue(textResponse(JSON.stringify({ hello: 1 })));
     await expect(buyActivation({ service: "wa", countryId: 187, supplierId: "438", maxPrice: 1 })).rejects.toBeInstanceOf(GrizzlyError);
+  });
+});
+
+describe("unusable getNumberV2 responses that still carry an activation id", () => {
+  it("exposes the id when the JSON is missing the other fields", async () => {
+    fetchMock.mockResolvedValue(textResponse(JSON.stringify({ activationId: 555, activationCost: "n/a" })));
+    await expect(buyActivation({ service: "wa", countryId: 187, supplierId: "438", maxPrice: 1 })).rejects.toMatchObject({
+      action: "getNumberV2",
+      activationId: "555",
+    });
+  });
+
+  it("exposes the id from a v1-style ACCESS_NUMBER text body", async () => {
+    fetchMock.mockResolvedValue(textResponse("ACCESS_NUMBER:38496653:66846426435"));
+    await expect(buyActivation({ service: "wa", countryId: 187, supplierId: "438", maxPrice: 1 })).rejects.toMatchObject({
+      activationId: "38496653",
+    });
+  });
+
+  it("exposes the id from a non-2xx body, read before the body is truncated", async () => {
+    fetchMock.mockResolvedValue(textResponse("x".repeat(400) + '{"activationId": 777}', 500));
+    const err = (await buyActivation({ service: "wa", countryId: 187, supplierId: "438", maxPrice: 1 }).catch(
+      (e: unknown) => e,
+    )) as GrizzlyError;
+    expect(err.activationId).toBe("777");
+    expect(err.body).toHaveLength(300);
+  });
+
+  it("has no id for plain error tokens, or for other actions", async () => {
+    fetchMock.mockResolvedValue(textResponse("NO_NUMBERS"));
+    await expect(buyActivation({ service: "wa", countryId: 187, supplierId: "438", maxPrice: 1 })).rejects.toMatchObject({
+      activationId: undefined,
+    });
+    expect(new GrizzlyError("getStatus", 200, '{"activationId": 1}').activationId).toBeUndefined();
+  });
+
+  it("extractActivationId accepts only digit ids", () => {
+    expect(extractActivationId('{"activationId":"123"}')).toBe("123");
+    expect(extractActivationId('{"activationId":"abc"}')).toBeUndefined();
+    expect(extractActivationId("garbage")).toBeUndefined();
   });
 });
 

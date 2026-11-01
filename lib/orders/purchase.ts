@@ -16,7 +16,7 @@ import {
   GrizzlyError,
   rankSuppliers,
 } from "@/lib/grizzly/client";
-import type { PurchaseFailureReason } from "./purchase-failures";
+import { sanitizeFailureMessage, type PurchaseFailureReason } from "./purchase-failures";
 import {
   CANCEL_GIVE_UP_AFTER_MS,
   enqueueUpstreamCancel,
@@ -232,6 +232,15 @@ async function buyFromProvider(
     } catch (err) {
       console.error(`Grizzly getNumberV2 failed for ${quote.serviceCode}/${quote.countryId}/${quote.supplierId}:`, err);
       const body = err instanceof GrizzlyError ? err.body.trim() : "";
+      // A response we couldn't use may still mean Grizzly reserved a number
+      // (an activation id came back). We can't sell it, so queue its cancel
+      // for after the lock, like a failed order write.
+      if (err instanceof GrizzlyError && err.activationId) {
+        console.error(
+          `Grizzly getNumberV2 returned an unusable response with activation ${err.activationId} — queueing its cancel. Body: ${sanitizeFailureMessage(err.body)}`,
+        );
+        await abandonUpstreamPurchase(admin, "grizzly", err.activationId, "order_record_failed", errorMessage(err));
+      }
       throw new PurchaseError(customerFacingGrizzlyPurchaseMessage(body), 502, {
         reason: body === "NO_NUMBERS" ? "upstream_no_numbers" : body === "NO_BALANCE" ? "provider_balance" : "other",
         internalMessage: errorMessage(err),

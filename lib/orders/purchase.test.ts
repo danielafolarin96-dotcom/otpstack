@@ -717,6 +717,26 @@ describe("purchaseNumber via Grizzly", () => {
     expect(enqueueUpstreamCancel).not.toHaveBeenCalled();
   });
 
+  it("queues a cancel when getNumberV2's response is unusable but carries an activation id", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.mocked(buyGrizzlyActivation).mockRejectedValue(
+      new GrizzlyError("getNumberV2", 200, JSON.stringify({ activationId: 38496653, phoneNumber: null })),
+    );
+    const client = fakeAdminClient(grizzlyConfigs(), baseRpcResult());
+
+    await expect(purchaseNumber(client, params())).rejects.toMatchObject({
+      status: 502,
+      reason: "other",
+      message: "Something went wrong purchasing this number — please try again.",
+    });
+    expect(client.rpc).not.toHaveBeenCalled();
+    expect(vi.mocked(enqueueUpstreamCancel).mock.calls[0][1]).toMatchObject({
+      provider: "grizzly",
+      providerOrderId: "38496653",
+      reason: "order_record_failed",
+    });
+  });
+
   it("rejects with 409 when the chosen supplier is no longer in stock", async () => {
     vi.mocked(getSupplierPrices).mockResolvedValue([{ ...SUPPLIERS[0], count: 0 }, SUPPLIERS[1]]);
     const client = fakeAdminClient(grizzlyConfigs(), baseRpcResult());

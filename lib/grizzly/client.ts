@@ -23,13 +23,41 @@ export const GRIZZLY_USD_CURRENCY = 840;
 
 const ERROR_BODY_MAX_LENGTH = 300;
 
+// Pulls an activation id out of a getNumber/getNumberV2 response we
+// otherwise couldn't use (unparseable, missing fields, non-2xx) — if one is
+// there, Grizzly may have reserved a number for us that must be cancelled.
+// Accepts the V2 JSON field and the v1 "ACCESS_NUMBER:<id>:<phone>" form.
+export function extractActivationId(body: string): string | undefined {
+  try {
+    const parsed = JSON.parse(body) as { activationId?: unknown };
+    const id = parsed?.activationId;
+    if ((typeof id === "number" && Number.isInteger(id)) || (typeof id === "string" && /^\d+$/.test(id))) {
+      return String(id);
+    }
+  } catch {
+    // not JSON — fall through to the text patterns
+  }
+  return (
+    /"activationId"\s*:\s*"?(\d+)/.exec(body)?.[1] ?? /ACCESS_NUMBER:(\d+)/.exec(body)?.[1] ?? undefined
+  );
+}
+
 export class GrizzlyError extends Error {
+  public body: string;
+  // getNumber* only: an activation id found in the failed response.
+  public activationId?: string;
+
+  // `body` may be the full response; it's truncated here, after the
+  // activation id (if any) has been read from the whole thing.
   constructor(
     public action: string,
     public status: number,
-    public body: string,
+    body: string,
   ) {
-    super(`grizzly ${action} failed: ${status} ${body}`);
+    const truncated = body.slice(0, ERROR_BODY_MAX_LENGTH);
+    super(`grizzly ${action} failed: ${status} ${truncated}`);
+    this.body = truncated;
+    if (action.startsWith("getNumber")) this.activationId = extractActivationId(body);
   }
 }
 
@@ -55,7 +83,7 @@ async function grizzlyFetch(params: Record<string, string>): Promise<string> {
 
   const body = redactGrizzlyKey((await response.text()).trim());
   if (!response.ok) {
-    throw new GrizzlyError(action, response.status, body.slice(0, ERROR_BODY_MAX_LENGTH));
+    throw new GrizzlyError(action, response.status, body);
   }
   return body;
 }
@@ -69,7 +97,7 @@ async function grizzlyJson<T>(params: Record<string, string>): Promise<T> {
   try {
     return JSON.parse(body) as T;
   } catch {
-    throw new GrizzlyError(params.action, 200, body.slice(0, ERROR_BODY_MAX_LENGTH));
+    throw new GrizzlyError(params.action, 200, body);
   }
 }
 
@@ -219,7 +247,7 @@ export async function buyActivation(params: {
   const phoneNumber = raw.phoneNumber;
   const activationCost = toNumber(raw.activationCost);
   if ((typeof activationId !== "number" && typeof activationId !== "string") || typeof phoneNumber !== "string" || activationCost === null) {
-    throw new GrizzlyError(action, 200, JSON.stringify(raw).slice(0, ERROR_BODY_MAX_LENGTH));
+    throw new GrizzlyError(action, 200, JSON.stringify(raw));
   }
   return {
     activationId: String(activationId),
