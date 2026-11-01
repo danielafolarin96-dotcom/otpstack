@@ -36,6 +36,8 @@ function fakeDb(initial: { queue?: Row[]; orders?: Row[]; finance?: Row[] } = {}
   const upserts: Row[] = [];
   const financeInserts: Row[] = [];
   let upsertError: unknown = null;
+  let financeInsertFailures = 0;
+  let flipFailures = 0;
 
   function query(table: string) {
     const preds: ((r: Row) => boolean)[] = [];
@@ -59,12 +61,26 @@ function fakeDb(initial: { queue?: Row[]; orders?: Row[]; finance?: Row[] } = {}
       order: () => builder,
       limit: () => builder,
       maybeSingle: () => Promise.resolve({ data: run()[0] ?? null, error: null }),
-      then: (resolve: (v: unknown) => void) => resolve({ data: run(), error: null }),
+      then: (resolve: (v: unknown) => void) => {
+        if (table === "orders" && patch && "upstream_cancel_succeeded" in patch && flipFailures > 0) {
+          flipFailures -= 1;
+          return resolve({ data: null, error: { message: "flip failed" } });
+        }
+        return resolve({ data: run(), error: null });
+      },
       upsert: (row: Row) => {
         upserts.push(row);
         return Promise.resolve({ error: upsertError });
       },
+      // finance_events: enforces the real (order_id, event_type) unique index.
       insert: (row: Row) => {
+        if (financeInsertFailures > 0) {
+          financeInsertFailures -= 1;
+          return Promise.resolve({ error: { message: "insert failed", code: "XX000" } });
+        }
+        if (financeInserts.some((r) => r.order_id === row.order_id && r.event_type === row.event_type)) {
+          return Promise.resolve({ error: { message: "duplicate", code: "23505" } });
+        }
         financeInserts.push(row);
         return Promise.resolve({ error: null });
       },
@@ -80,6 +96,12 @@ function fakeDb(initial: { queue?: Row[]; orders?: Row[]; finance?: Row[] } = {}
     financeInserts,
     failUpserts: (err: unknown) => {
       upsertError = err;
+    },
+    failNextFinanceInserts: (n: number) => {
+      financeInsertFailures = n;
+    },
+    failNextFlips: (n: number) => {
+      flipFailures = n;
     },
   };
 }
@@ -220,6 +242,58 @@ describe("processDueUpstreamCancels", () => {
     expect(result).toEqual({ cancelled: 0, alreadyClosed: 0, smsArrived: 0, gaveUp: 0, retrying: 0, failed: 0 });
   });
 
+  it("leaves the row retryable when booking the recovery fails, and books it exactly once on the retry", async () => {
+    vi.mocked(cancelActivation).mockResolvedValueOnce(undefined);
+    const db = fakeDb({ queue: [queueRow()], orders: [{ ...REFUNDED_ORDER }] });
+    db.failNextFinanceInserts(1);
+
+    const first = await processDueUpstreamCancels(db.client, NOW);
+
+    expect(first.failed).toBe(1);
+    expect(db.tables.upstream_cancel_queue[0]).toMatchObject({ resolved_at: null, outcome: null });
+    expect(db.tables.orders[0].upstream_cancel_succeeded).toBe(false);
+    expect(db.financeInserts).toEqual([]);
+
+    // Next run, after the retry interval: the cancel is already done, so
+    // Grizzly refuses it, and the re-check shows the activation cancelled.
+    vi.mocked(cancelActivation).mockRejectedValueOnce(new GrizzlyError("setStatus", 200, "BAD_STATUS"));
+    vi.mocked(getActivationState).mockResolvedValueOnce({ state: "cancelled" });
+    const second = await processDueUpstreamCancels(db.client, new Date(NOW.getTime() + 61_000));
+
+    expect(second.alreadyClosed).toBe(1);
+    expect(db.tables.upstream_cancel_queue[0].outcome).toBe("already_closed");
+    expect(db.tables.orders[0].upstream_cancel_succeeded).toBe(true);
+    expect(db.financeInserts).toHaveLength(1);
+  });
+
+  it("when the finance row lands but flipping the order fails, the retry flips it without a second finance row", async () => {
+    vi.mocked(cancelActivation).mockResolvedValueOnce(undefined);
+    const db = fakeDb({ queue: [queueRow()], orders: [{ ...REFUNDED_ORDER }] });
+    db.failNextFlips(1);
+
+    const first = await processDueUpstreamCancels(db.client, NOW);
+    expect(first.failed).toBe(1);
+    expect(db.financeInserts).toHaveLength(1);
+    expect(db.tables.upstream_cancel_queue[0].resolved_at).toBeNull();
+
+    vi.mocked(cancelActivation).mockRejectedValueOnce(new GrizzlyError("setStatus", 200, "BAD_STATUS"));
+    vi.mocked(getActivationState).mockResolvedValueOnce({ state: "cancelled" });
+    await processDueUpstreamCancels(db.client, new Date(NOW.getTime() + 61_000));
+
+    expect(db.financeInserts).toHaveLength(1);
+    expect(db.tables.orders[0].upstream_cancel_succeeded).toBe(true);
+    expect(db.tables.upstream_cancel_queue[0].outcome).toBe("already_closed");
+  });
+
+  it("still returns its result when scheduling the next retry throws", async () => {
+    vi.mocked(cancelActivation).mockRejectedValue(LOCKED);
+    vi.mocked(getActivationState).mockResolvedValue({ state: "waiting" });
+    vi.mocked(scheduleUpstreamCancelRetry).mockRejectedValueOnce(new Error("qstash down"));
+    const db = fakeDb({ queue: [queueRow()] });
+
+    await expect(processDueUpstreamCancels(db.client, NOW)).resolves.toMatchObject({ retrying: 1 });
+  });
+
   it("resolves an abandoned purchase (no order) without touching orders or finance", async () => {
     vi.mocked(cancelActivation).mockResolvedValue(undefined);
     const db = fakeDb({ queue: [queueRow({ order_id: null, reason: "price_above_quote" })] });
@@ -248,6 +322,40 @@ describe("enqueueUpstreamCancel", () => {
     expect(db.upserts[0]).toMatchObject({ provider: "grizzly", provider_order_id: "777", order_id: null, reason: "price_above_quote" });
     expect(scheduleUpstreamCancelRetry).toHaveBeenCalledWith(335);
     vi.useRealTimers();
+  });
+
+  it("never throws when scheduling the retry throws — the row is still queued", async () => {
+    vi.mocked(scheduleUpstreamCancelRetry).mockRejectedValueOnce(new Error("qstash down"));
+    const db = fakeDb();
+
+    await expect(
+      enqueueUpstreamCancel(db.client, {
+        provider: "grizzly",
+        providerOrderId: "777",
+        reason: "cancel_locked",
+        notBefore: NOW,
+        giveUpAt: NOW,
+      }),
+    ).resolves.toBe(true);
+    expect(db.upserts).toHaveLength(1);
+  });
+
+  it("never throws even when the client itself throws", async () => {
+    const client = {
+      from: () => {
+        throw new Error("boom");
+      },
+    } as unknown as SupabaseClient<Database>;
+
+    await expect(
+      enqueueUpstreamCancel(client, {
+        provider: "grizzly",
+        providerOrderId: "777",
+        reason: "cancel_locked",
+        notBefore: NOW,
+        giveUpAt: NOW,
+      }),
+    ).resolves.toBe(false);
   });
 
   it("never throws when the insert fails", async () => {
@@ -289,6 +397,35 @@ describe("cancelUpstreamWithRecovery", () => {
 
     expect(outcome).toEqual({ succeeded: false, error: "grizzly setStatus failed: 200 EARLY_CANCEL_DENIED", queued: true });
     expect(db.upserts[0]).toMatchObject({ order_id: "order-1", reason: "cancel_locked" });
+  });
+
+  it("still reports queued when scheduling the retry throws", async () => {
+    vi.mocked(cancelActivation).mockRejectedValue(LOCKED);
+    vi.mocked(getActivationState).mockResolvedValue({ state: "waiting" });
+    vi.mocked(scheduleUpstreamCancelRetry).mockRejectedValueOnce(new Error("qstash down"));
+    const db = fakeDb();
+
+    await expect(cancelUpstreamWithRecovery(db.client, GRIZZLY_ORDER)).resolves.toMatchObject({
+      succeeded: false,
+      queued: true,
+    });
+  });
+
+  it("never throws, even when handling the failed cancel itself throws", async () => {
+    const hostile = new Error("x");
+    Object.defineProperty(hostile, "message", {
+      get() {
+        throw new Error("message getter exploded");
+      },
+    });
+    vi.mocked(cancelActivation).mockRejectedValue(hostile);
+
+    await expect(cancelUpstreamWithRecovery(fakeDb().client, GRIZZLY_ORDER)).resolves.toEqual({
+      succeeded: false,
+      // The error raised while handling the failure, described instead.
+      error: "message getter exploded",
+      queued: false,
+    });
   });
 
   it("decision 6 (Grizzly): a failed cancel on an activation already cancelled upstream counts as recovered, error kept", async () => {

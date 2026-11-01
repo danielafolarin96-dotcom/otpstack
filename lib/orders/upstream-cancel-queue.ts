@@ -44,10 +44,12 @@ export interface EnqueueUpstreamCancelInput {
   lastError?: string | null;
 }
 
-// Best-effort, never throws: if this insert fails the order/refund it's
-// attached to must still go through. The failure is logged loudly since it
-// leaves an activation we meant to close open until Grizzly's own 20-minute
-// expiry.
+// Best-effort and never throws — not on the insert, not on the retry
+// scheduling after it: it runs inside refund paths between claiming an
+// order and crediting the wallet, so it must never stop them. A failed
+// insert is logged loudly since it leaves an activation we meant to close
+// open until Grizzly's own 20-minute expiry. Returns whether the row was
+// queued (a failed QStash schedule still counts: the sweeps pick it up).
 export async function enqueueUpstreamCancel(
   admin: SupabaseClient<Database>,
   input: EnqueueUpstreamCancelInput,
@@ -74,9 +76,13 @@ export async function enqueueUpstreamCancel(
     return false;
   }
 
-  await scheduleUpstreamCancelRetry(
-    Math.max(0, (input.notBefore.getTime() - Date.now()) / 1000) + SCHEDULE_PADDING_SECONDS,
-  );
+  try {
+    await scheduleUpstreamCancelRetry(
+      Math.max(0, (input.notBefore.getTime() - Date.now()) / 1000) + SCHEDULE_PADDING_SECONDS,
+    );
+  } catch (err) {
+    console.error("Failed to schedule the upstream cancel retry — the backstop sweeps will process it:", err);
+  }
   return true;
 }
 
@@ -93,8 +99,29 @@ export interface UpstreamCancelOutcome {
 }
 
 // The cancel step every refund path shares (expiry, manual cancel, admin
-// refund). Never throws.
+// refund). Never throws: it runs after the order has been claimed as
+// refunded and before the wallet is credited, so any failure in here
+// (cancel, re-check, queueing, even describing the error) degrades to "not
+// recovered" and the refund still happens.
 export async function cancelUpstreamWithRecovery(
+  admin: SupabaseClient<Database>,
+  order: UpstreamOrderRef & { id: string },
+): Promise<UpstreamCancelOutcome> {
+  try {
+    return await cancelWithRecovery(admin, order);
+  } catch (err) {
+    console.error(`Upstream cancel handling failed for order ${order.id} — treating the cost as not recovered:`, err);
+    let error: string;
+    try {
+      error = describeUpstreamError(err);
+    } catch {
+      error = "upstream cancel handling failed";
+    }
+    return { succeeded: false, error, queued: false };
+  }
+}
+
+async function cancelWithRecovery(
   admin: SupabaseClient<Database>,
   order: UpstreamOrderRef & { id: string },
 ): Promise<UpstreamCancelOutcome> {
@@ -130,20 +157,22 @@ export async function cancelUpstreamWithRecovery(
 
 // A refund booked as "cost lost" (upstream_cancel_succeeded = false,
 // refund_issued with provider_cost_kobo = 0) whose queued cancel later
-// succeeded: flip the order and record the recovery as its own append-only
-// finance event. The conditional update makes this run at most once per
-// order; the (order_id, event_type) unique index backs that up.
+// succeeded: record the recovery as its own append-only finance event, then
+// flip the order. Safe to repeat after a partial failure — the finance
+// insert comes first and a duplicate is a no-op (unique (order_id,
+// event_type)), and only once it's written does the flag flip, so a retry
+// can never skip the finance row. Throws on failure so the caller leaves
+// the queue row retryable.
 async function recordCostRecovered(admin: SupabaseClient<Database>, orderId: string): Promise<void> {
   const { data: order, error } = await admin
     .from("orders")
-    .update({ upstream_cancel_succeeded: true })
+    .select("*")
     .eq("id", orderId)
     .eq("upstream_cancel_succeeded", false)
     .in("status", ["expired_refunded", "cancelled_refunded"])
-    .select()
     .maybeSingle();
   if (error) throw error;
-  if (!order) return;
+  if (!order) return; // never booked as lost, or already recovered
 
   const { data: recognized } = await admin
     .from("finance_events")
@@ -164,6 +193,13 @@ async function recordCostRecovered(admin: SupabaseClient<Database>, orderId: str
     paymentFeeKobo: 0,
     metadata: { source: "upstream_cancel_queue" },
   });
+
+  const { error: flipError } = await admin
+    .from("orders")
+    .update({ upstream_cancel_succeeded: true })
+    .eq("id", orderId)
+    .eq("upstream_cancel_succeeded", false);
+  if (flipError) throw flipError;
 }
 
 export interface ProcessQueueResult {
@@ -231,6 +267,15 @@ export async function processDueUpstreamCancels(
         continue;
       }
 
+      // The recovery is booked BEFORE the row is resolved: if booking
+      // fails, this throws, the row stays unresolved (its claim already
+      // pushed not_before a retry interval out) and the next run tries
+      // again — the cancel then fails as already done, the re-check says
+      // already_closed, and the booking is retried.
+      if ((outcome === "cancelled" || outcome === "already_closed") && row.order_id) {
+        await recordCostRecovered(admin, row.order_id);
+      }
+
       const { error: resolveError } = await admin
         .from("upstream_cancel_queue")
         .update({ resolved_at: now.toISOString(), outcome, last_error: lastError })
@@ -242,9 +287,6 @@ export async function processDueUpstreamCancels(
         // bills us for it. Nothing to undo; it shows as a lost cost on the
         // Margin page.
         console.error(`Late SMS on ${row.provider} order ${row.provider_order_id} before its queued cancel landed.`);
-      }
-      if ((outcome === "cancelled" || outcome === "already_closed") && row.order_id) {
-        await recordCostRecovered(admin, row.order_id);
       }
 
       if (outcome === "cancelled") result.cancelled += 1;
@@ -258,7 +300,11 @@ export async function processDueUpstreamCancels(
   }
 
   if (result.retrying > 0) {
-    await scheduleUpstreamCancelRetry(CANCEL_RETRY_INTERVAL_SECONDS + SCHEDULE_PADDING_SECONDS);
+    try {
+      await scheduleUpstreamCancelRetry(CANCEL_RETRY_INTERVAL_SECONDS + SCHEDULE_PADDING_SECONDS);
+    } catch (err) {
+      console.error("Failed to schedule the upstream cancel retry — the backstop sweeps will process it:", err);
+    }
   }
   return result;
 }
