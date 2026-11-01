@@ -5,11 +5,18 @@ describe("parseGetStatus", () => {
   it.each([
     ["STATUS_WAIT_CODE", { state: "waiting" }],
     ["STATUS_WAIT_RESEND", { state: "waiting" }],
-    ["STATUS_WAIT_RETRY:1234", { state: "waiting" }],
     ["STATUS_CANCEL", { state: "cancelled" }],
     ["STATUS_OK:852508", { state: "received", code: "852508", text: null, smsDateTime: null }],
+    // A code was already delivered; Grizzly is waiting for a follow-up one.
+    ["STATUS_WAIT_RETRY:1234", { state: "received", code: "1234", text: null, smsDateTime: null }],
   ])("%s", (body, expected) => {
     expect(parseGetStatus(body)).toEqual(expected);
+  });
+
+  it("treats STATUS_OK / STATUS_WAIT_RETRY with no code as unknown, never as received", () => {
+    expect(parseGetStatus("STATUS_OK:")).toBeNull();
+    expect(parseGetStatus("STATUS_OK:   ")).toBeNull();
+    expect(parseGetStatus("STATUS_WAIT_RETRY:")).toBeNull();
   });
 
   it("returns null for anything unrecognised, e.g. an error token", () => {

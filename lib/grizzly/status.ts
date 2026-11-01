@@ -23,13 +23,19 @@ export type GrizzlyActivationState =
 // which every money path handles as "not cancelled, no SMS proven".
 export function parseGetStatus(body: string): GrizzlyActivationState | null {
   const text = body.trim();
-  if (text === "STATUS_WAIT_CODE" || text === "STATUS_WAIT_RESEND" || text.startsWith("STATUS_WAIT_RETRY")) {
-    return { state: "waiting" };
-  }
+  if (text === "STATUS_WAIT_CODE" || text === "STATUS_WAIT_RESEND") return { state: "waiting" };
   if (text === "STATUS_CANCEL") return { state: "cancelled" };
-  if (text.startsWith("STATUS_OK:")) {
-    const code = text.slice("STATUS_OK:".length).trim();
-    return { state: "received", code, text: null, smsDateTime: null };
+
+  // STATUS_OK:<code> is a delivered code. STATUS_WAIT_RETRY:<lastcode> means
+  // a code was already delivered and Grizzly is waiting for a follow-up —
+  // so a code has arrived (and Grizzly charges for it): received, with that
+  // code. Either one with nothing after the colon carries no code and is
+  // treated as unknown, never as received.
+  for (const prefix of ["STATUS_OK:", "STATUS_WAIT_RETRY:"]) {
+    if (text.startsWith(prefix)) {
+      const code = text.slice(prefix.length).trim();
+      return code ? { state: "received", code, text: null, smsDateTime: null } : null;
+    }
   }
   return null;
 }
