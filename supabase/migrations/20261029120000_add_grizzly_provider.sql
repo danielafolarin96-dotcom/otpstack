@@ -310,5 +310,5 @@ begin
 end;
 $$;
 
-revoke all on function public.create_order_and_debit_wallet from public;
+revoke all on function public.create_order_and_debit_wallet from public, anon, authenticated;
 grant execute on function public.create_order_and_debit_wallet to service_role;
