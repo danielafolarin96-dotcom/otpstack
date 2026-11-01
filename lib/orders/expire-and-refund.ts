@@ -24,6 +24,16 @@ interface ExpirableOrder {
   expires_at: string;
 }
 
+// Product decision (1 Nov 2026): a Grizzly SMS whose arrival time can't be
+// established (Grizzly sent no usable dateTime, or we have no activation
+// time to measure it against) is still delivered rather than refunded when
+// the expiry check runs within this long after expires_at — the normal
+// case for the QStash callback (TTL + 10s). Grizzly charges us for that SMS
+// whether or not the customer gets it, and that soon after expiry it
+// almost certainly arrived inside the hold. Later than this, an
+// unprovable SMS is refunded as before.
+const UNKNOWN_ARRIVAL_DELIVERY_GRACE_MS = 60_000;
+
 export interface ExpireResult {
   // false means no refund was issued, callers must not assume
   // "expired_refunded" happened: either another path (a late-arriving SMS,
@@ -63,7 +73,12 @@ export async function expireAndRefundOrder(
   const upstream = await fetchUpstreamState(order);
   if (upstream?.hasSms) {
     const arrivedAt = upstream.smsArrivedAt;
-    if (arrivedAt !== null && arrivedAt <= new Date(order.expires_at).getTime()) {
+    const expiresAtMs = new Date(order.expires_at).getTime();
+    const deliver =
+      arrivedAt !== null
+        ? arrivedAt <= expiresAtMs
+        : asProviderName(order.provider) === "grizzly" && Date.now() <= expiresAtMs + UNKNOWN_ARRIVAL_DELIVERY_GRACE_MS;
+    if (deliver) {
       const updates: { status: "sms_received"; completed_at: string; otp_code?: string } = {
         status: "sms_received",
         completed_at: new Date().toISOString(),

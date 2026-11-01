@@ -1,8 +1,9 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/types/database";
 import { cancelOrder, checkOrder, FiveSimError, type FiveSimOrder } from "@/lib/5sim/client";
 import { cancelActivation, finishActivation, getActivationState, GrizzlyError } from "@/lib/grizzly/client";
+import { scheduleUpstreamCancelRetry } from "@/lib/qstash/client";
 import { expireAndRefundOrder } from "./expire-and-refund";
 
 vi.mock("@/lib/5sim/client", async (importOriginal) => {
@@ -560,6 +561,85 @@ describe("expireAndRefundOrder", () => {
       expect(deliverPayload).toMatchObject({ status: "sms_received", otp_code: "852508" });
       expect(finishActivation).toHaveBeenCalledWith("38496653");
       expect(cancelActivation).not.toHaveBeenCalled();
+    });
+
+    describe("SMS present but its arrival time can't be determined", () => {
+      const EXPIRES_MS = new Date(GRIZZLY_ORDER.expires_at).getTime();
+      const noTime = { state: "received" as const, code: "852508", text: null, smsDateTime: null };
+
+      afterEach(() => {
+        vi.useRealTimers();
+      });
+
+      it("delivers the code when the expiry check runs within 60s after expires_at", async () => {
+        vi.useFakeTimers({ now: EXPIRES_MS + 30_000, toFake: ["Date"] });
+        vi.mocked(getActivationState).mockResolvedValue(noTime);
+        let deliverPayload: Record<string, unknown> | undefined;
+        const callOrder: string[] = [];
+        const client = fakeAdminClient({
+          claimResult: claimed,
+          deliverResult: { data: { ...GRIZZLY_ORDER, status: "sms_received" }, error: null },
+          onDeliver: (p) => (deliverPayload = p),
+          callOrder,
+        });
+
+        await expect(expireAndRefundOrder(client, GRIZZLY_ORDER)).resolves.toEqual({ refunded: false, smsReceived: true });
+
+        expect(deliverPayload).toMatchObject({ status: "sms_received", otp_code: "852508" });
+        expect(callOrder).toEqual([]); // no refund, no finance reversal
+        expect(cancelActivation).not.toHaveBeenCalled();
+      });
+
+      it("also delivers when it's our activation time that's missing", async () => {
+        vi.useFakeTimers({ now: EXPIRES_MS + 30_000, toFake: ["Date"] });
+        vi.mocked(getActivationState).mockResolvedValue({ ...noTime, smsDateTime: "2026-10-29 12:01:00" });
+        const client = fakeAdminClient({
+          claimResult: claimed,
+          deliverResult: { data: { ...GRIZZLY_ORDER, status: "sms_received" }, error: null },
+        });
+
+        await expect(
+          expireAndRefundOrder(client, { ...GRIZZLY_ORDER, upstream_activation_time: null }),
+        ).resolves.toEqual({ refunded: false, smsReceived: true });
+      });
+
+      it("refunds as before when the check runs more than 60s after expires_at", async () => {
+        vi.useFakeTimers({ now: EXPIRES_MS + 90_000, toFake: ["Date"] });
+        vi.mocked(getActivationState).mockResolvedValue(noTime);
+        vi.mocked(cancelActivation).mockRejectedValue(new GrizzlyError("setStatus", 200, "BAD_STATUS"));
+        const onDeliver = vi.fn();
+        const callOrder: string[] = [];
+        const client = fakeAdminClient({ claimResult: claimed, onDeliver, callOrder });
+
+        await expect(expireAndRefundOrder(client, GRIZZLY_ORDER)).resolves.toEqual({ refunded: true });
+
+        expect(onDeliver).not.toHaveBeenCalled();
+        expect(callOrder).toContain("wallet_transactions.insert");
+      });
+
+      it("does not extend the grace to 5sim: an untimestamped 5sim SMS still refunds", async () => {
+        vi.useFakeTimers({ now: new Date(ORDER.expires_at).getTime() + 30_000, toFake: ["Date"] });
+        vi.mocked(checkOrder).mockResolvedValue(upstreamOrder([{ code: "111111" }]));
+        vi.mocked(cancelOrder).mockResolvedValue({} as never);
+        const onDeliver = vi.fn();
+        const client = fakeAdminClient({ claimResult: { data: { ...ORDER, status: "expired_refunded" }, error: null }, onDeliver });
+
+        await expect(expireAndRefundOrder(client, ORDER)).resolves.toEqual({ refunded: true });
+        expect(onDeliver).not.toHaveBeenCalled();
+      });
+    });
+
+    it("still credits the wallet when the locked cancel's retry scheduling throws", async () => {
+      vi.mocked(cancelActivation).mockRejectedValue(LOCKED);
+      vi.mocked(scheduleUpstreamCancelRetry).mockRejectedValueOnce(new Error("qstash down"));
+      const callOrder: string[] = [];
+      const onQueueUpsert = vi.fn();
+      const client = fakeAdminClient({ claimResult: claimed, callOrder, onQueueUpsert });
+
+      await expect(expireAndRefundOrder(client, GRIZZLY_ORDER)).resolves.toEqual({ refunded: true });
+
+      expect(onQueueUpsert).toHaveBeenCalled();
+      expect(callOrder).toEqual(["wallet_transactions.insert", "finance_events.insert"]);
     });
 
     it("refunds when the SMS landed after the hold ended", async () => {
