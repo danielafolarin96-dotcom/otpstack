@@ -66,6 +66,12 @@ export default async function AdminLayout({ children }: { children: React.ReactN
             Margin
           </Link>
           <Link
+            href="/admin/grizzly-fallback"
+            className="rounded-[10px] px-3 py-2 text-sm font-medium text-text-dim transition-colors hover:bg-paper hover:text-text"
+          >
+            Grizzly fallback
+          </Link>
+          <Link
             href="/admin/finance"
             className="rounded-[10px] px-3 py-2 text-sm font-medium text-text-dim transition-colors hover:bg-paper hover:text-text"
           >

@@ -10,6 +10,7 @@ import {
   type GrizzlyActivation,
 } from "@/lib/grizzly/client";
 import { enqueueUpstreamCancel } from "./upstream-cancel-queue";
+import { recordPurchaseFailure } from "./purchase-failures";
 import { PurchaseError, purchaseNumber } from "./purchase";
 
 vi.mock("@/lib/grizzly/client", async () => {
@@ -21,6 +22,13 @@ vi.mock("@/lib/grizzly/client", async () => {
 vi.mock("./upstream-cancel-queue", async () => {
   const actual = await vi.importActual<typeof import("./upstream-cancel-queue")>("./upstream-cancel-queue");
   return { ...actual, enqueueUpstreamCancel: vi.fn().mockResolvedValue(true) };
+});
+
+vi.mock("./purchase-failures", async () => {
+  const actual = await vi.importActual<typeof import("./purchase-failures")>("./purchase-failures");
+  // sanitizeFailureMessage stays real; recordPurchaseFailure is asserted on
+  // directly rather than exercising its real Supabase insert.
+  return { ...actual, recordPurchaseFailure: vi.fn() };
 });
 
 vi.mock("@/lib/5sim/client", async () => {
@@ -716,10 +724,9 @@ describe("purchaseNumber via Grizzly", () => {
   });
 
   it.each([
-    ["NO_NUMBERS", "upstream_no_numbers", "No numbers currently available for this service/country — try again shortly or pick a different country."],
     ["NO_BALANCE", "provider_balance", "Something went wrong purchasing this number — please try again."],
     ["BAD_SERVICE", "other", "Something went wrong purchasing this number — please try again."],
-  ])("maps Grizzly %s to reason %s without showing the raw text", async (body, reason, message) => {
+  ])("maps Grizzly %s to reason %s without falling back — only a no-stock failure does that", async (body, reason, message) => {
     vi.mocked(buyGrizzlyActivation).mockRejectedValue(new GrizzlyError("getNumberV2", 200, body));
     const client = fakeAdminClient(grizzlyConfigs(), baseRpcResult());
 
@@ -732,6 +739,54 @@ describe("purchaseNumber via Grizzly", () => {
     });
     expect(client.rpc).not.toHaveBeenCalled();
     expect(enqueueUpstreamCancel).not.toHaveBeenCalled();
+    expect(buyActivation).not.toHaveBeenCalled();
+  });
+
+  it("falls back to 5sim's recommended operator when Grizzly's getNumberV2 rejects a freshly re-validated supplier with NO_NUMBERS", async () => {
+    vi.mocked(buyGrizzlyActivation).mockRejectedValue(new GrizzlyError("getNumberV2", 200, "NO_NUMBERS"));
+    const client = fakeAdminClient(grizzlyConfigs(), baseRpcResult());
+
+    await purchaseNumber(client, params());
+
+    expect(buyGrizzlyActivation).toHaveBeenCalled();
+    expect(getOperatorPrices).toHaveBeenCalledWith("nigeria", "whatsapp");
+    expect(buyActivation).toHaveBeenCalledWith("nigeria", "virtual2", "whatsapp");
+    expect(client.rpc).toHaveBeenCalledWith("create_order_and_debit_wallet", expect.objectContaining({ p_provider: "5sim" }));
+    expect(enqueueUpstreamCancel).not.toHaveBeenCalled();
+    // The recovered Grizzly failure is logged -- not thrown -- once the
+    // 5sim order actually exists, so /admin/grizzly-fallback can see it.
+    expect(recordPurchaseFailure).toHaveBeenCalledWith(
+      client,
+      expect.objectContaining({
+        userId: "user-1",
+        serviceId: SERVICE.id,
+        countryId: COUNTRY.id,
+        operator: "438",
+        reason: "upstream_no_numbers",
+        provider: "grizzly",
+        httpStatus: 200,
+        recoveredByFallback: true,
+        recoveredOrderId: "order-1",
+      }),
+    );
+  });
+
+  it("surfaces the original Grizzly NO_NUMBERS error when 5sim has nothing to fall back to either", async () => {
+    vi.mocked(buyGrizzlyActivation).mockRejectedValue(new GrizzlyError("getNumberV2", 200, "NO_NUMBERS"));
+    vi.mocked(getOperatorPrices).mockResolvedValue({ recommended: null, options: [] });
+    const client = fakeAdminClient(grizzlyConfigs(), baseRpcResult());
+
+    await expect(purchaseNumber(client, params())).rejects.toMatchObject({
+      status: 502,
+      reason: "upstream_no_numbers",
+      provider: "grizzly",
+    });
+    expect(buyActivation).not.toHaveBeenCalled();
+    expect(client.rpc).not.toHaveBeenCalled();
+    // No order ever existed to point recovered_order_id at -- the thrown
+    // error is left to app/api/orders/route.ts's own purchase_failures
+    // logging, same as any other PurchaseError.
+    expect(recordPurchaseFailure).not.toHaveBeenCalled();
   });
 
   it("queues a cancel when getNumberV2's response is unusable but carries an activation id", async () => {
@@ -754,16 +809,16 @@ describe("purchaseNumber via Grizzly", () => {
     });
   });
 
-  it("rejects with 409 when the chosen supplier is no longer in stock", async () => {
+  it("falls back to 5sim's recommended operator when the chosen Grizzly supplier drops out of stock before purchase", async () => {
     vi.mocked(getSupplierPrices).mockResolvedValue([{ ...SUPPLIERS[0], count: 0 }, SUPPLIERS[1]]);
     const client = fakeAdminClient(grizzlyConfigs(), baseRpcResult());
 
-    await expect(purchaseNumber(client, params("438"))).rejects.toMatchObject({
-      status: 409,
-      reason: "operator_unavailable",
-      provider: "grizzly",
-    });
+    await purchaseNumber(client, params("438"));
+
     expect(buyGrizzlyActivation).not.toHaveBeenCalled();
+    expect(getOperatorPrices).toHaveBeenCalledWith("nigeria", "whatsapp");
+    expect(buyActivation).toHaveBeenCalledWith("nigeria", "virtual2", "whatsapp");
+    expect(client.rpc).toHaveBeenCalledWith("create_order_and_debit_wallet", expect.objectContaining({ p_provider: "5sim" }));
   });
 
   it("queues the cancel (instead of cancelling now) when recording the order fails", async () => {

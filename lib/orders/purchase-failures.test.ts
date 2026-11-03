@@ -52,6 +52,8 @@ describe("recordPurchaseFailure", () => {
       provider: "grizzly",
       http_status: 402,
       message: "Insufficient wallet balance",
+      recovered_by_fallback: false,
+      recovered_order_id: null,
     });
   });
 

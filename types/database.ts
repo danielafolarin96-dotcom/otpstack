@@ -12,31 +12,6 @@ export type Database = {
   __InternalSupabase: {
     PostgrestVersion: "14.17"
   }
-  graphql_public: {
-    Tables: {
-      [_ in never]: never
-    }
-    Views: {
-      [_ in never]: never
-    }
-    Functions: {
-      graphql: {
-        Args: {
-          extensions?: Json
-          operationName?: string
-          query?: string
-          variables?: Json
-        }
-        Returns: Json
-      }
-    }
-    Enums: {
-      [_ in never]: never
-    }
-    CompositeTypes: {
-      [_ in never]: never
-    }
-  }
   public: {
     Tables: {
       admin_audit_log: {
@@ -205,33 +180,6 @@ export type Database = {
           pair?: string
           rate?: number
           source?: string
-        }
-        Relationships: []
-      }
-      provider_funding_rates: {
-        Row: {
-          effective_from: string
-          id: string
-          ngn_per_usd: number
-          note: string | null
-          pair: string
-          provider: string
-        }
-        Insert: {
-          effective_from?: string
-          id?: string
-          ngn_per_usd: number
-          note?: string | null
-          pair?: string
-          provider: string
-        }
-        Update: {
-          effective_from?: string
-          id?: string
-          ngn_per_usd?: number
-          note?: string | null
-          pair?: string
-          provider?: string
         }
         Relationships: []
       }
@@ -412,6 +360,33 @@ export type Database = {
           },
         ]
       }
+      provider_funding_rates: {
+        Row: {
+          effective_from: string
+          id: string
+          ngn_per_usd: number
+          note: string | null
+          pair: string
+          provider: string
+        }
+        Insert: {
+          effective_from?: string
+          id?: string
+          ngn_per_usd: number
+          note?: string | null
+          pair?: string
+          provider: string
+        }
+        Update: {
+          effective_from?: string
+          id?: string
+          ngn_per_usd?: number
+          note?: string | null
+          pair?: string
+          provider?: string
+        }
+        Relationships: []
+      }
       provider_routes: {
         Row: {
           country_id: string | null
@@ -467,6 +442,8 @@ export type Database = {
           operator: string | null
           provider: string | null
           reason: string
+          recovered_by_fallback: boolean
+          recovered_order_id: string | null
           service_id: string | null
           user_id: string
         }
@@ -479,6 +456,8 @@ export type Database = {
           operator?: string | null
           provider?: string | null
           reason: string
+          recovered_by_fallback?: boolean
+          recovered_order_id?: string | null
           service_id?: string | null
           user_id: string
         }
@@ -491,10 +470,19 @@ export type Database = {
           operator?: string | null
           provider?: string | null
           reason?: string
+          recovered_by_fallback?: boolean
+          recovered_order_id?: string | null
           service_id?: string | null
           user_id?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "purchase_failures_recovered_order_id_fkey"
+            columns: ["recovered_order_id"]
+            isOneToOne: false
+            referencedRelation: "orders"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "purchase_failures_user_id_fkey"
             columns: ["user_id"]
@@ -936,9 +924,6 @@ export type CompositeTypes<
     : never
 
 export const Constants = {
-  graphql_public: {
-    Enums: {},
-  },
   public: {
     Enums: {
       finance_event_type: [

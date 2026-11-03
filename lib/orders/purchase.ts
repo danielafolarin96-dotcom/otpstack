@@ -15,7 +15,7 @@ import {
   GrizzlyError,
   rankSuppliers,
 } from "@/lib/grizzly/client";
-import { sanitizeFailureMessage, type PurchaseFailureReason } from "./purchase-failures";
+import { recordPurchaseFailure, sanitizeFailureMessage, type PurchaseFailureReason } from "./purchase-failures";
 import {
   CANCEL_GIVE_UP_AFTER_MS,
   enqueueUpstreamCancel,
@@ -307,6 +307,77 @@ async function buyFromProvider(
   }
 }
 
+interface QuotedPurchase {
+  quote: Quote;
+  bought: UpstreamPurchase;
+  resolved: ReturnType<typeof priceFromRulesAndRate>;
+  paymentFeeKobo: number;
+  fxRate: number;
+}
+
+// Quotes, prices, checks the wallet, and buys — one attempt, against
+// whichever provider/operator it's given. Pulled out of purchaseNumber so
+// the Grizzly no-stock fallback can run it twice (Grizzly, then 5sim)
+// against the same pricing rules/fx/fee-schedule/balance snapshot, without
+// refetching any of them — nothing here has side effects on our side until
+// buyFromProvider actually spends money upstream.
+async function quoteAndBuy(
+  admin: SupabaseClient<Database>,
+  provider: ProviderName,
+  service: ServiceRow,
+  country: CountryRow,
+  operator: string,
+  allRules: Awaited<ReturnType<typeof fetchAllPricingRules>>,
+  fxRates: Awaited<ReturnType<typeof fetchPricingFxRates>>,
+  feeSchedule: Awaited<ReturnType<typeof fetchActiveFeeSchedule>>,
+  balanceKobo: number,
+): Promise<QuotedPurchase> {
+  const quote = await quoteChosenOption(provider, service, country, operator);
+  // Real funding cost of the provider that sells this number, not just the
+  // market rate (see effectiveFxRate) — used for both the price and
+  // upstream_cost_kobo, so profit reports reflect what that provider's
+  // balance actually cost us.
+  const fxRate = effectiveFxRate(fxRates, provider);
+  const resolved = priceFromRulesAndRate(allRules, fxRate, service.id, country.id, {
+    amount: quote.costUsd,
+    currency: "USD",
+  });
+  // No configured schedule degrades to a $0 imputed fee rather than
+  // blocking the purchase — see lib/finance/fee-schedule.ts. Computed here
+  // (not in SQL) so the fee formula lives in exactly one, unit-tested place.
+  const paymentFeeKobo = feeSchedule ? computeFeeKobo(resolved.priceKobo, feeSchedule) : 0;
+  if (balanceKobo < resolved.priceKobo) {
+    throw new PurchaseError("Insufficient wallet balance", 402, {
+      reason: "insufficient_balance",
+      shortfallKobo: resolved.priceKobo - balanceKobo,
+      provider,
+    });
+  }
+  const bought = await buyFromProvider(admin, quote, service, country);
+  return { quote, bought, resolved, paymentFeeKobo, fxRate };
+}
+
+// Reasons from quoteChosenOption/buyFromProvider's Grizzly path that mean
+// "no stock right now" rather than a real billing/config problem — the
+// only case the Grizzly-to-5sim fallback in purchaseNumber applies to.
+function isGrizzlyNoStockFailure(err: unknown): err is PurchaseError {
+  return (
+    err instanceof PurchaseError &&
+    err.provider === "grizzly" &&
+    (err.reason === "operator_unavailable" || err.reason === "upstream_no_numbers")
+  );
+}
+
+// Picks 5sim's own best operator for a Grizzly no-stock fallback — the
+// customer's chosen operator was a Grizzly supplier id, meaningless to
+// 5sim. null means 5sim has nothing in stock for this service/country
+// either, so the caller surfaces the original Grizzly failure instead of a
+// confusing unrelated one.
+async function pickFivesimFallbackOperator(service: ServiceRow, country: CountryRow): Promise<string | null> {
+  const { recommended } = await getOperatorPrices(country.fivesim_country_code, service.fivesim_product_code);
+  return recommended?.operator ?? null;
+}
+
 // Order lifecycle step 1-2 (ARCHITECTURE.md): balance check -> buy -> debit
 // -> order created. There's no separate "quote" step to re-validate
 // against — we never trust a client-supplied price, so fetching the
@@ -364,29 +435,13 @@ export async function purchaseNumber(
   if (!service) throw new PurchaseError("Service not found or inactive", 404);
   if (!country) throw new PurchaseError("Country not found or inactive", 404);
 
-  const provider = await resolveProvider(admin, service, country);
-  const quote = await quoteChosenOption(provider, service, country, params.operator);
+  let provider = await resolveProvider(admin, service, country);
 
   const [allRules, fxRates, feeSchedule] = await Promise.all([
     fetchAllPricingRules(admin),
     fetchPricingFxRates(admin, UPSTREAM_CURRENCY_PAIR),
     fetchActiveFeeSchedule(admin),
   ]);
-  // Real funding cost of the provider that sells this number, not just the
-  // market rate (see effectiveFxRate) — used for both the price and
-  // upstream_cost_kobo below, so profit reports reflect what that
-  // provider's balance actually cost us.
-  const fxRate = effectiveFxRate(fxRates, provider);
-
-  const resolved = priceFromRulesAndRate(allRules, fxRate, service.id, country.id, {
-    amount: quote.costUsd,
-    currency: "USD",
-  });
-
-  // No configured schedule degrades to a $0 imputed fee rather than
-  // blocking the purchase — see lib/finance/fee-schedule.ts. Computed here
-  // (not in SQL) so the fee formula lives in exactly one, unit-tested place.
-  const paymentFeeKobo = feeSchedule ? computeFeeKobo(resolved.priceKobo, feeSchedule) : 0;
 
   const { data: wallet, error: walletError } = await admin
     .from("wallets")
@@ -395,16 +450,43 @@ export async function purchaseNumber(
     .maybeSingle();
   if (walletError) throw walletError;
   const balanceKobo = wallet?.balance_kobo ?? 0;
-  if (balanceKobo < resolved.priceKobo) {
-    throw new PurchaseError("Insufficient wallet balance", 402, {
-      reason: "insufficient_balance",
-      shortfallKobo: resolved.priceKobo - balanceKobo,
-      provider,
-    });
-  }
 
   // Nothing above this line has written anything or cost anything.
-  const bought = await buyFromProvider(admin, quote, service, country);
+  // Set when the catch below recovers a Grizzly no-stock failure via 5sim —
+  // carries the original error through to the purchase_failures row
+  // recorded once the fallback order actually exists (see below).
+  let recoveredFromGrizzlyFailure: PurchaseError | null = null;
+  let attempt: QuotedPurchase;
+  try {
+    attempt = await quoteAndBuy(admin, provider, service, country, params.operator, allRules, fxRates, feeSchedule, balanceKobo);
+  } catch (err) {
+    // Grizzly's catalog (getPricesV3) can say a supplier has stock when
+    // getNumberV2 immediately disagrees — Grizzly's own docs call
+    // NO_NUMBERS an expected condition, fixed by retrying or choosing
+    // another country (observed live 2 Nov 2026: 4 Grizzly suppliers in a
+    // row, all freshly re-validated as in stock, all rejected the actual
+    // purchase). Rather than dead-ending the customer, a no-stock failure
+    // on Grizzly gets one retry on 5sim's own recommended operator — not
+    // the customer's chosen operator, which was a Grizzly supplier id and
+    // means nothing to 5sim. Any other Grizzly failure (our own balance, a
+    // price-above-quote mismatch, an unusable-but-reserved response) still
+    // surfaces untouched: those aren't "no stock", and papering over them
+    // would hide a real billing or config problem instead of fixing a dead
+    // end.
+    if (!isGrizzlyNoStockFailure(err)) throw err;
+
+    const fallbackOperator = await pickFivesimFallbackOperator(service, country);
+    // 5sim has nothing either — the original Grizzly error is the honest one.
+    if (!fallbackOperator) throw err;
+
+    console.log(
+      `Grizzly had no stock for ${service.grizzly_service_code}/${country.grizzly_country_id} (${err.reason}) — falling back to 5sim operator ${fallbackOperator}`,
+    );
+    recoveredFromGrizzlyFailure = err;
+    provider = "5sim";
+    attempt = await quoteAndBuy(admin, provider, service, country, fallbackOperator, allRules, fxRates, feeSchedule, balanceKobo);
+  }
+  const { quote, bought, resolved, paymentFeeKobo, fxRate } = attempt;
 
   // upstream_cost_kobo is what we were really charged, for accurate margin
   // reporting; price_kobo is what we charge the user, the quote we already
@@ -463,6 +545,27 @@ export async function purchaseNumber(
       lostBalanceRace ? 402 : 500,
       { reason: lostBalanceRace ? "insufficient_balance" : "other", internalMessage: message, provider },
     );
+  }
+
+  // The order went through, but only because Grizzly failed and 5sim
+  // covered for it — recorded as a recovered purchase_failures row (not
+  // thrown; the customer got their number) so /admin/grizzly-fallback can
+  // show how often this is actually happening. Best-effort, like the
+  // scheduleOrderExpiry call below: recordPurchaseFailure never throws and
+  // never blocks or changes the response.
+  if (recoveredFromGrizzlyFailure) {
+    await recordPurchaseFailure(admin, {
+      userId: params.userId,
+      serviceId: service.id,
+      countryId: country.id,
+      operator: params.operator,
+      reason: recoveredFromGrizzlyFailure.reason,
+      provider: "grizzly",
+      httpStatus: 200,
+      message: recoveredFromGrizzlyFailure.internalMessage ?? recoveredFromGrizzlyFailure.message,
+      recoveredByFallback: true,
+      recoveredOrderId: order.id,
+    });
   }
 
   // Best-effort, non-blocking of the response below (same pattern as

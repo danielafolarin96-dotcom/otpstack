@@ -47,6 +47,13 @@ export interface PurchaseFailure {
   provider?: string;
   httpStatus: number;
   message: string;
+  // Set by purchaseNumber's Grizzly->5sim no-stock fallback (see
+  // isGrizzlyNoStockFailure in lib/orders/purchase.ts) when this Grizzly
+  // failure didn't actually fail the purchase -- the customer still got a
+  // number, just from 5sim. Absent/false for every other row, including
+  // Grizzly failures where the fallback also had nothing.
+  recoveredByFallback?: boolean;
+  recoveredOrderId?: string | null;
 }
 
 function asUuid(value: unknown): string | null {
@@ -81,6 +88,8 @@ export async function recordPurchaseFailure(
       provider: failure.provider ?? null,
       http_status: failure.httpStatus,
       message: sanitizeFailureMessage(failure.message),
+      recovered_by_fallback: failure.recoveredByFallback ?? false,
+      recovered_order_id: failure.recoveredOrderId ?? null,
     });
     if (error) console.error("Failed to record purchase failure:", error);
   } catch (err) {
