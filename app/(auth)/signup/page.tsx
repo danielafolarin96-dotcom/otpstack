@@ -1,5 +1,12 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { SignupForm } from "./signup-form";
+
+export const metadata: Metadata = {
+  title: "Create account",
+  description: "Create a free OtpStack account. Get virtual numbers for WhatsApp, Telegram, TikTok and 700+ apps in 130 countries, paid in naira.",
+  alternates: { canonical: "/signup" },
+};
 
 export default function SignupPage() {
   return (

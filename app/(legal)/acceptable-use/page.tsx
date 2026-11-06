@@ -3,7 +3,7 @@ import Link from "next/link";
 import { LegalSection, LegalTitle } from "../_components/legal-prose";
 import { SUPPORT_EMAIL } from "@/lib/content/contact";
 
-export const metadata: Metadata = { title: "Acceptable Use Policy — OtpStack" };
+export const metadata: Metadata = { title: "Acceptable Use Policy", alternates: { canonical: "/acceptable-use" } };
 
 export default function AcceptableUsePage() {
   return (

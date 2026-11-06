@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { LegalSection, LegalTitle } from "../_components/legal-prose";
 import { SUPPORT_EMAIL } from "@/lib/content/contact";
 
-export const metadata: Metadata = { title: "Privacy Policy — OtpStack" };
+export const metadata: Metadata = { title: "Privacy Policy", alternates: { canonical: "/privacy" } };
 
 export default function PrivacyPage() {
   return (

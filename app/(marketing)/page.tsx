@@ -8,11 +8,39 @@ import { DeliveryOdds } from "@/components/catalog/delivery-odds";
 import { SiteFooter } from "@/components/site-footer";
 import { getBrandIcon } from "@/lib/icons/lookup";
 import { DELIVERY_ODDS_SERVICES } from "@/lib/marketing/delivery-odds-data";
+import { SITE_DESCRIPTION, SITE_NAME, SITE_URL } from "@/lib/site";
+import { SUPPORT_EMAIL } from "@/lib/content/contact";
 
 // Prices come from pricing_rules via the engine — without this, Next would
 // prerender the catalog once at build time and serve stale prices until
 // the next deploy instead of recomputing them per request.
 export const dynamic = "force-dynamic";
+
+// Tells Google the business name, site and logo, which helps the site show
+// up properly when someone searches "OtpStack" by name.
+const STRUCTURED_DATA = {
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "Organization",
+      "@id": `${SITE_URL}/#organization`,
+      name: SITE_NAME,
+      url: SITE_URL,
+      logo: `${SITE_URL}/icon.png`,
+      email: SUPPORT_EMAIL,
+      areaServed: "NG",
+    },
+    {
+      "@type": "WebSite",
+      "@id": `${SITE_URL}/#website`,
+      name: SITE_NAME,
+      url: SITE_URL,
+      description: SITE_DESCRIPTION,
+      publisher: { "@id": `${SITE_URL}/#organization` },
+      inLanguage: "en-NG",
+    },
+  ],
+};
 
 const PROCESS_STEPS = [
   {
@@ -80,6 +108,12 @@ export default async function Home() {
 
   return (
     <>
+      <script
+        type="application/ld+json"
+        // Static, hand-written JSON from lib/site.ts constants only: no
+        // user input reaches this, so there's nothing to escape.
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(STRUCTURED_DATA) }}
+      />
       <header className="mx-auto flex w-full max-w-[1080px] items-center justify-between px-5 py-6">
         <span className="font-display text-xl font-bold text-ink">OtpStack</span>
         <nav className="flex items-center gap-3">

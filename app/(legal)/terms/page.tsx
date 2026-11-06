@@ -3,7 +3,7 @@ import Link from "next/link";
 import { LegalSection, LegalTitle } from "../_components/legal-prose";
 import { SUPPORT_EMAIL } from "@/lib/content/contact";
 
-export const metadata: Metadata = { title: "Terms of Service — OtpStack" };
+export const metadata: Metadata = { title: "Terms of Service", alternates: { canonical: "/terms" } };
 
 export default function TermsPage() {
   return (

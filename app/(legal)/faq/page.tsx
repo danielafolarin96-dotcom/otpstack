@@ -3,7 +3,7 @@ import Link from "next/link";
 import { LegalSection, LegalTitle } from "../_components/legal-prose";
 import { SUPPORT_EMAIL } from "@/lib/content/contact";
 
-export const metadata: Metadata = { title: "FAQ — OtpStack" };
+export const metadata: Metadata = { title: "FAQ", description: "Answers about OtpStack: how virtual numbers work, how long you have to get your code, refunds, and funding your wallet in naira.", alternates: { canonical: "/faq" } };
 
 export default function FaqPage() {
   return (
