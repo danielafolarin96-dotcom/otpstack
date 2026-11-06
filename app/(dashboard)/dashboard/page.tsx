@@ -6,6 +6,7 @@ import { EmptyState } from "./_components/empty-state";
 import { TransactionsTable } from "./wallet/transactions-table";
 import { ActiveNumberPanel, type ActiveOrder } from "./active-number-panel";
 import { customerCanCancel } from "@/lib/providers/policy";
+import { shouldShowOnDashboard } from "@/lib/orders/active-order";
 import { DashboardAppSearch } from "./app-search";
 
 const QUICK_BUY_COUNT = 4;
@@ -20,7 +21,7 @@ export default async function OverviewPage() {
 
   const admin = createAdminClient();
 
-  const [{ data: profile }, { data: wallet }, { data: recentTransactions }, countries, { data: pendingOrder }] =
+  const [{ data: profile }, { data: wallet }, { data: recentTransactions }, countries, { data: latestOrder }] =
     await Promise.all([
       supabase.from("users").select("full_name").eq("id", user.id).maybeSingle(),
       supabase.from("wallets").select("balance_kobo").eq("user_id", user.id).maybeSingle(),
@@ -31,28 +32,23 @@ export default async function OverviewPage() {
         .order("created_at", { ascending: false })
         .limit(5),
       fetchActiveCountries(admin),
-      // Bug fix (Sept 2026): this used to be .eq("status", "pending"), so
-      // the instant an order's SMS arrived (status -> sms_received) it
-      // stopped matching and ActiveNumberPanel's next router.refresh()
-      // (triggered by its own polling, see that component) re-rendered
-      // with no active order at all — the customer had to go to Order
-      // History to see a code that had, from their perspective, just
-      // appeared and immediately vanished. Including sms_received here
-      // keeps the delivered order showing; ActiveNumberPanel now clears it
-      // only on an explicit dismiss (persisted client-side) or once a
-      // newer order exists (this query always returns the most recent
-      // one, so a fresh purchase naturally supersedes it — no separate
-      // "clear" trigger needed for that case).
+      // The newest order of ANY status — see lib/orders/active-order.ts for
+      // why (Nov 2026 fix: filtering on pending/sms_received here let an
+      // older delivered order resurface once the newest one expired).
+      // shouldShowOnDashboard below decides whether it's still "active".
+      // (Sept 2026 history: this was once .eq("status", "pending"), which
+      // made a delivered code vanish the instant it arrived; sms_received
+      // still shows — the panel clears it on Dismiss/Copy, or once stale.)
       supabase
         .from("orders")
         .select("*, services(name)")
         .eq("user_id", user.id)
-        .in("status", ["pending", "sms_received"])
         .order("created_at", { ascending: false })
         .limit(1)
         .maybeSingle(),
     ]);
 
+  const pendingOrder = shouldShowOnDashboard(latestOrder) ? latestOrder : null;
   const activeOrder: ActiveOrder | null = pendingOrder
     ? {
         id: pendingOrder.id,

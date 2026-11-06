@@ -165,6 +165,11 @@ export function ActiveNumberPanel({ order: initialOrder }: { order: ActiveOrder 
     if (!order?.otpCode) return;
     try {
       await navigator.clipboard.writeText(order.otpCode);
+      // Copying the code means the customer has it — remember that like a
+      // Dismiss, so the card doesn't come back on the next visit/reload. It
+      // stays on screen for now (only persisted, not cleared) so they can
+      // still read it while pasting.
+      writeDismissedOrderId(order.id);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {
