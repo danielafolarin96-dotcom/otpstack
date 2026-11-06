@@ -1,10 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/types/database";
-import { buyActivation, cancelOrder, FiveSimError, getOperatorPrices } from "@/lib/5sim/client";
+import { buyActivation, cancelOrder, FiveSimError, getOperatorPrices, getProfile } from "@/lib/5sim/client";
 import { scheduleOrderExpiry } from "@/lib/qstash/client";
 import {
   buyActivation as buyGrizzlyActivation,
+  getBalance as getGrizzlyBalance,
   getSupplierPrices,
   GrizzlyError,
   type GrizzlyActivation,
@@ -16,7 +17,7 @@ import { PurchaseError, purchaseNumber } from "./purchase";
 vi.mock("@/lib/grizzly/client", async () => {
   const actual = await vi.importActual<typeof import("@/lib/grizzly/client")>("@/lib/grizzly/client");
   // Ranking, GrizzlyError and the message map stay real.
-  return { ...actual, buyActivation: vi.fn(), getSupplierPrices: vi.fn() };
+  return { ...actual, buyActivation: vi.fn(), getSupplierPrices: vi.fn(), getBalance: vi.fn() };
 });
 
 vi.mock("./upstream-cancel-queue", async () => {
@@ -36,7 +37,7 @@ vi.mock("@/lib/5sim/client", async () => {
   // FiveSimError and customerFacingPurchaseErrorMessage stay real — the
   // point of these tests is exercising that actual mapping, not mocking
   // it away.
-  return { ...actual, buyActivation: vi.fn(), cancelOrder: vi.fn(), getOperatorPrices: vi.fn() };
+  return { ...actual, buyActivation: vi.fn(), cancelOrder: vi.fn(), getOperatorPrices: vi.fn(), getProfile: vi.fn() };
 });
 
 // Real scheduleOrderExpiry would construct an actual QStash client and
@@ -193,6 +194,12 @@ beforeEach(() => {
   });
   vi.mocked(buyActivation).mockResolvedValue(FIVESIM_ORDER);
   vi.mocked(cancelOrder).mockResolvedValue({ ...FIVESIM_ORDER, status: "CANCELED" });
+  // Comfortably above every quote used in this file (highest is the
+  // Grizzly suppliers' $0.52) — checkProviderCanAfford's own tests override
+  // this low to exercise the gate; every other test just needs it out of
+  // the way.
+  vi.mocked(getProfile).mockResolvedValue({ id: 1, email: "account@5sim.net", balance: 1000, rating: 5 });
+  vi.mocked(getGrizzlyBalance).mockResolvedValue(1000);
 });
 
 describe("purchaseNumber", () => {
@@ -590,6 +597,34 @@ describe("purchaseNumber", () => {
     });
     expect(cancelOrder).toHaveBeenCalledWith(String(FIVESIM_ORDER.id));
   });
+
+  describe("proactive provider-balance check", () => {
+    it("refuses up front when 5sim's own live balance can't cover the quote — never attempts the buy call", async () => {
+      vi.mocked(getProfile).mockResolvedValue({ id: 1, email: "account@5sim.net", balance: 0.1, rating: 5 });
+      const client = fakeAdminClient(baseConfigs(), baseRpcResult());
+
+      await expect(purchaseNumber(client, purchaseParams())).rejects.toMatchObject({
+        status: 502,
+        message: "Something went wrong purchasing this number — please try again.",
+        reason: "provider_balance",
+        provider: "5sim",
+        internalMessage: expect.stringContaining("0.1"),
+      });
+      expect(buyActivation).not.toHaveBeenCalled();
+      expect(client.rpc).not.toHaveBeenCalled();
+    });
+
+    it("proceeds with the purchase when the balance check itself fails — best-effort, not a new way to fail", async () => {
+      vi.mocked(getProfile).mockRejectedValue(new Error("5sim /user/profile timed out"));
+      vi.spyOn(console, "error").mockImplementation(() => {});
+      const client = fakeAdminClient(baseConfigs(), baseRpcResult());
+
+      const result = await purchaseNumber(client, purchaseParams());
+
+      expect(result.order.id).toBe("order-1");
+      expect(buyActivation).toHaveBeenCalled();
+    });
+  });
 });
 
 describe("PurchaseError", () => {
@@ -740,6 +775,29 @@ describe("purchaseNumber via Grizzly", () => {
     expect(client.rpc).not.toHaveBeenCalled();
     expect(enqueueUpstreamCancel).not.toHaveBeenCalled();
     expect(buyActivation).not.toHaveBeenCalled();
+  });
+
+  it("refuses up front when Grizzly's own live balance can't cover the quote, and does not fall back to 5sim", async () => {
+    // Below the $0.52 supplier 438 quotes — proactively caught before
+    // getNumberV2 is ever called, unlike NO_BALANCE above which is only
+    // discovered by attempting the buy.
+    vi.mocked(getGrizzlyBalance).mockResolvedValue(0.1);
+    const client = fakeAdminClient(grizzlyConfigs(), baseRpcResult());
+
+    await expect(purchaseNumber(client, params())).rejects.toMatchObject({
+      status: 502,
+      message: "Something went wrong purchasing this number — please try again.",
+      reason: "provider_balance",
+      provider: "grizzly",
+      internalMessage: expect.stringContaining("0.1"),
+    });
+    expect(buyGrizzlyActivation).not.toHaveBeenCalled();
+    // provider_balance isn't a no-stock reason (isGrizzlyNoStockFailure only
+    // matches operator_unavailable/upstream_no_numbers), so this must not
+    // trigger the Grizzly-to-5sim fallback.
+    expect(buyActivation).not.toHaveBeenCalled();
+    expect(client.rpc).not.toHaveBeenCalled();
+    expect(recordPurchaseFailure).not.toHaveBeenCalled();
   });
 
   it("falls back to 5sim's recommended operator when Grizzly's getNumberV2 rejects a freshly re-validated supplier with NO_NUMBERS", async () => {

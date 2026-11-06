@@ -205,7 +205,11 @@ const FIVESIM_BUY_ERROR_MESSAGES: Record<string, string> = {
     "No numbers currently available for this service/country — try again shortly or pick a different country.",
 };
 
-const GENERIC_PURCHASE_FAILURE_MESSAGE = "Something went wrong purchasing this number — please try again.";
+// Exported for lib/orders/purchase.ts's proactive provider-balance check
+// (checkProviderCanAfford) — the same generic text a reactive "not enough
+// user balance" failure would already show, so a purchase blocked before
+// even trying the buy call reads identically to one that failed on it.
+export const GENERIC_PURCHASE_FAILURE_MESSAGE = "Something went wrong purchasing this number — please try again.";
 
 export function customerFacingPurchaseErrorMessage(rawMessage: string): string {
   const normalized = rawMessage.trim().toLowerCase();

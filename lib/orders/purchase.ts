@@ -5,12 +5,15 @@ import {
   buyActivation,
   cancelOrder,
   customerFacingPurchaseErrorMessage,
+  GENERIC_PURCHASE_FAILURE_MESSAGE,
   getOperatorPrices,
+  getProfile,
   judgedRate,
 } from "@/lib/5sim/client";
 import {
   buyActivation as buyGrizzlyActivation,
   customerFacingGrizzlyPurchaseMessage,
+  getBalance as getGrizzlyBalance,
   getSupplierPrices,
   GrizzlyError,
   rankSuppliers,
@@ -209,6 +212,40 @@ async function quoteChosenOption(
   return { provider, operator: chosen.operator, costUsd: chosen.cost, judgedRate: judgedRate(chosen) };
 }
 
+// Proactive gate in front of buyFromProvider's actual spend: checks the
+// resolved provider's own live account balance against what this specific
+// quote will cost, so a drained account is refused cleanly up front
+// instead of discovered by attempting (and, for Grizzly, possibly
+// reserving then having to cancel) a buy we already know can't succeed.
+// Deliberately best-effort, not a new way for a purchase to fail: if the
+// balance call itself errors (network blip, a bad response), this logs it
+// and lets the purchase proceed as if the check never ran — buyFromProvider's
+// existing reactive provider_balance detection (string-matching 5sim's
+// "not enough user balance" / Grizzly's NO_BALANCE, below) is still the
+// real safety net either way. Uses reason "provider_balance" rather than
+// "operator_unavailable"/"upstream_no_numbers" so it's never mistaken for
+// a no-stock failure — isGrizzlyNoStockFailure below deliberately does not
+// match it, so a low Grizzly balance surfaces as a real failure rather
+// than silently falling back to 5sim.
+async function checkProviderCanAfford(provider: ProviderName, costUsd: number): Promise<void> {
+  let balanceUsd: number;
+  try {
+    balanceUsd = provider === "grizzly" ? await getGrizzlyBalance() : (await getProfile()).balance;
+  } catch (err) {
+    console.error(`Couldn't check ${provider}'s balance before buying — proceeding without the early check:`, err);
+    return;
+  }
+  if (balanceUsd < costUsd) {
+    const detail = `${provider}'s own balance ($${balanceUsd}) is below the $${costUsd} this purchase needs`;
+    console.error(detail);
+    throw new PurchaseError(GENERIC_PURCHASE_FAILURE_MESSAGE, 502, {
+      reason: "provider_balance",
+      internalMessage: detail,
+      provider,
+    });
+  }
+}
+
 // Point of no return — this spends real money upstream. Full provider
 // error detail is logged and kept in internalMessage; the customer only
 // ever sees the mapped message, since some provider errors (5sim's "not
@@ -220,6 +257,8 @@ async function buyFromProvider(
   service: ServiceRow,
   country: CountryRow,
 ): Promise<UpstreamPurchase> {
+  await checkProviderCanAfford(quote.provider, quote.costUsd);
+
   if (quote.provider === "grizzly") {
     let activation;
     try {
